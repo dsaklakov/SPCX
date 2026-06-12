@@ -27,12 +27,6 @@ def money(x: Optional[float]) -> str:
     return f"${x:,.2f}"
 
 
-def pct(x: Optional[float]) -> str:
-    if x is None or pd.isna(x):
-        return "-"
-    return f"{100 * x:,.2f}%"
-
-
 def num(x: Optional[float]) -> str:
     if x is None or pd.isna(x):
         return "-"
@@ -47,6 +41,28 @@ def get_secret(name: str) -> Optional[str]:
     except Exception:
         pass
     return os.getenv(name)
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def now_utc_string() -> str:
+    return now_utc().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def parse_utc_string(value: str) -> Optional[datetime]:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def quote_age_minutes(snapshot_time: str) -> Optional[float]:
+    parsed = parse_utc_string(snapshot_time)
+    if parsed is None:
+        return None
+    return max(0.0, (now_utc() - parsed).total_seconds() / 60.0)
 
 
 def polygon_snapshot(ticker: str, api_key: str) -> Dict:
@@ -67,7 +83,7 @@ def polygon_snapshot(ticker: str, api_key: str) -> Dict:
     if ts_ns:
         snapshot_time = datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     else:
-        snapshot_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        snapshot_time = now_utc_string()
 
     return {
         "provider": "Polygon snapshot",
@@ -78,6 +94,7 @@ def polygon_snapshot(ticker: str, api_key: str) -> Dict:
         "low": float(day.get("l") or prev_day.get("l") or price),
         "volume": float(day.get("v") or prev_day.get("v") or 0),
         "snapshot_time": snapshot_time,
+        "app_refresh_time": now_utc_string(),
     }
 
 
@@ -95,7 +112,7 @@ def yahoo_intraday(ticker: str) -> Dict:
     try:
         snapshot_time = snapshot_time.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S UTC")
     except Exception:
-        snapshot_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        snapshot_time = now_utc_string()
 
     return {
         "provider": "Yahoo/yfinance fallback",
@@ -106,6 +123,7 @@ def yahoo_intraday(ticker: str) -> Dict:
         "low": float(hist["Low"].min()),
         "volume": float(hist["Volume"].sum()),
         "snapshot_time": snapshot_time,
+        "app_refresh_time": now_utc_string(),
     }
 
 
@@ -118,7 +136,8 @@ def manual_snapshot(ticker: str, price: float, high: float, low: float, open_pri
         "high": float(high),
         "low": float(low),
         "volume": float(volume),
-        "snapshot_time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "snapshot_time": now_utc_string(),
+        "app_refresh_time": now_utc_string(),
     }
 
 
@@ -126,12 +145,12 @@ def get_market_snapshot(provider: str, ticker: str, manual_values: Dict[str, flo
     if provider == "Polygon":
         key = get_secret("POLYGON_API_KEY")
         if not key:
-            return yahoo_intraday(ticker), "No POLYGON_API_KEY found. Used Yahoo/yfinance fallback."
+            return yahoo_intraday(ticker), "No POLYGON_API_KEY found. Yahoo/yfinance fallback is active. This may be delayed and should be treated as near-live, not exchange-direct live."
         try:
             return polygon_snapshot(ticker, key), None
         except Exception as e:
             try:
-                return yahoo_intraday(ticker), f"Polygon failed: {e}. Used Yahoo/yfinance fallback."
+                return yahoo_intraday(ticker), f"Polygon failed: {e}. Yahoo/yfinance fallback is active."
             except Exception as e2:
                 raise RuntimeError(f"Polygon failed: {e}. Yahoo fallback also failed: {e2}")
     if provider == "Yahoo/yfinance":
@@ -192,6 +211,7 @@ def build_model(snapshot: Dict, targets, risk_weight: float, position_size: floa
     ladder_df = pd.DataFrame(ladder_rows)
 
     shares_held = implied_total_shares - ipo_shares_sold
+    age = quote_age_minutes(snapshot["snapshot_time"])
     stats_rows = [
         ["Current price", price],
         ["Intraday high", high],
@@ -207,7 +227,9 @@ def build_model(snapshot: Dict, targets, risk_weight: float, position_size: floa
         ["Turnover vs IPO shares sold", volume / ipo_shares_sold if ipo_shares_sold else None],
         ["Turnover vs implied total shares", volume / implied_total_shares if implied_total_shares else None],
         ["Live implied market cap", price * implied_total_shares],
-        ["Snapshot time", snapshot["snapshot_time"]],
+        ["Quote timestamp", snapshot["snapshot_time"]],
+        ["App refresh timestamp", snapshot["app_refresh_time"]],
+        ["Quote age minutes", age],
         ["Provider", snapshot["provider"]],
     ]
     stats_df = pd.DataFrame(stats_rows, columns=["Metric", "Value"])
@@ -227,12 +249,18 @@ def make_excel(snapshot: Dict, model_df: pd.DataFrame, ladder_df: pd.DataFrame, 
 
 st.title("SPCX Live Sale Model")
 
+has_polygon_key = bool(get_secret("POLYGON_API_KEY"))
+provider_options = ["Polygon", "Yahoo/yfinance", "Manual override"]
+default_provider_index = 0 if has_polygon_key else 1
+
 with st.sidebar:
     st.header("Controls")
     ticker = st.text_input("Ticker", value="SPCX").upper().strip()
-    provider = st.selectbox("Quote provider", ["Polygon", "Yahoo/yfinance", "Manual override"], index=0)
+    provider = st.selectbox("Quote provider", provider_options, index=default_provider_index)
     refresh_seconds = st.number_input("Auto-refresh seconds", min_value=10, max_value=600, value=30, step=10)
     auto_refresh = st.toggle("Auto-refresh", value=True)
+    if st.button("Refresh now"):
+        st.rerun()
     risk_weight = st.number_input("Risk weight", min_value=0.0, max_value=2.0, value=0.35, step=0.05)
     position_size = st.number_input("Position size", min_value=1.0, value=100.0, step=1.0)
     targets_text = st.text_input("Sale targets", value=", ".join(str(x) for x in DEFAULT_TARGETS))
@@ -246,8 +274,9 @@ with st.sidebar:
     manual_open = st.number_input("Manual open", min_value=0.0, value=150.00, step=0.01)
     manual_volume = st.number_input("Manual volume", min_value=0.0, value=315_425_119.0, step=1000.0)
 
+refresh_count = None
 if auto_refresh:
-    st_autorefresh(interval=int(refresh_seconds * 1000), key="spcx_live_refresh")
+    refresh_count = st_autorefresh(interval=int(refresh_seconds * 1000), key="spcx_live_refresh")
 
 try:
     targets = [float(x.strip()) for x in targets_text.split(",") if x.strip()]
@@ -270,18 +299,25 @@ except Exception as e:
     st.stop()
 
 if warning:
-    st.warning(warning)
+    st.info(warning)
+elif provider == "Yahoo/yfinance":
+    st.info("Yahoo/yfinance fallback is active. The app refreshes every configured interval, but quote data can still be delayed by the provider.")
 
 model_df, ladder_df, stats_df = build_model(snapshot, targets, risk_weight, position_size, ipo_shares_sold, implied_total_shares)
+quote_age = quote_age_minutes(snapshot["snapshot_time"])
 
-kpi_cols = st.columns(5)
+kpi_cols = st.columns(6)
 kpi_cols[0].metric("Current price", money(snapshot["price"]))
 kpi_cols[1].metric("High", money(snapshot["high"]))
 kpi_cols[2].metric("Low", money(snapshot["low"]))
 kpi_cols[3].metric("Volume", num(snapshot["volume"]))
-kpi_cols[4].metric("Provider", snapshot["provider"])
+kpi_cols[4].metric("Quote age", "-" if quote_age is None else f"{quote_age:.1f} min")
+kpi_cols[5].metric("Provider", snapshot["provider"])
 
-st.caption(f"Last snapshot: {snapshot['snapshot_time']}")
+st.caption(
+    f"Quote timestamp: {snapshot['snapshot_time']} | App refreshed: {snapshot['app_refresh_time']}"
+    + (f" | Auto-refresh run: {refresh_count}" if refresh_count is not None else "")
+)
 
 left, right = st.columns([1.1, 1])
 with left:
