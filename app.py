@@ -515,12 +515,12 @@ scenario_line = alt.Chart(ladder_df).mark_line(point=True).encode(
     x=alt.X("Target sell price:Q", title="Target price"),
     y=alt.Y("Estimated P/L at target:Q", title="Estimated P/L"),
     tooltip=[
-        alt.Tooltip("Target sell price:Q", title="Target", format="$, .2f"),
+        alt.Tooltip("Target sell price:Q", title="Target", format="$.2f"),
         alt.Tooltip("Direction:N", title="Direction"),
         alt.Tooltip("Probability to target:Q", title="Probability", format=".1%"),
-        alt.Tooltip("Estimated P/L at target:Q", title="Estimated P/L", format="$, .2f"),
+        alt.Tooltip("Estimated P/L at target:Q", title="Estimated P/L", format="$.2f"),
         alt.Tooltip("Reward / risk:Q", title="Reward / risk", format=".2f"),
-        alt.Tooltip("Expected value $/sh:Q", title="EV $/sh", format="$, .2f"),
+        alt.Tooltip("Expected value $/sh:Q", title="EV $/sh", format="$.2f"),
         alt.Tooltip("Action:N", title="Action"),
     ],
 )
@@ -553,9 +553,9 @@ risk_reward_chart = alt.Chart(risk_reward_df).mark_line(point=True).encode(
     y=alt.Y("USD per share:Q", title="USD per share"),
     color=alt.Color("Line:N", title="Line"),
     tooltip=[
-        alt.Tooltip("Target sell price:Q", title="Target", format="$, .2f"),
+        alt.Tooltip("Target sell price:Q", title="Target", format="$.2f"),
         alt.Tooltip("Line:N", title="Line"),
-        alt.Tooltip("USD per share:Q", title="USD per share", format="$, .2f"),
+        alt.Tooltip("USD per share:Q", title="USD per share", format="$.2f"),
     ],
 ).properties(height=320)
 st.altair_chart(risk_reward_chart, use_container_width=True)
@@ -565,11 +565,11 @@ prob_chart = alt.Chart(ladder_df).mark_line(point=True).encode(
     x=alt.X("Target sell price:Q", title="Target price"),
     y=alt.Y("Probability to target:Q", title="Probability", axis=alt.Axis(format="%")),
     tooltip=[
-        alt.Tooltip("Target sell price:Q", title="Target", format="$, .2f"),
+        alt.Tooltip("Target sell price:Q", title="Target", format="$.2f"),
         alt.Tooltip("Direction:N", title="Direction"),
         alt.Tooltip("Probability to target:Q", title="Probability", format=".1%"),
         alt.Tooltip("Reward / risk:Q", title="Reward / risk", format=".2f"),
-        alt.Tooltip("Expected value $/sh:Q", title="EV $/sh", format="$, .2f"),
+        alt.Tooltip("Expected value $/sh:Q", title="EV $/sh", format="$.2f"),
         alt.Tooltip("Action:N", title="Action"),
     ],
 ).properties(height=320)
