@@ -2,6 +2,7 @@ import math
 import os
 from datetime import datetime, time, timezone
 from io import BytesIO
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -16,6 +17,64 @@ except Exception:
 
 
 st.set_page_config(page_title="SPCX Live Model", layout="wide")
+
+APP_DIR = Path(__file__).resolve().parent
+HERO_IMAGE = APP_DIR / "assets" / "spacex_ipo_robotech.png"
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.4rem;
+        max-width: 1440px;
+    }
+
+    .spcx-hero-card {
+        margin-top: 0.75rem;
+        margin-bottom: 1.25rem;
+        padding: 1.1rem 1.25rem;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 18px;
+        background:
+            radial-gradient(circle at top left, rgba(75, 150, 255, 0.20), transparent 36%),
+            linear-gradient(135deg, rgba(14, 22, 39, 0.95), rgba(3, 7, 15, 0.92));
+        box-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
+    }
+
+    .spcx-eyebrow {
+        color: #8fc7ff;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin-bottom: 0.35rem;
+    }
+
+    .spcx-title {
+        color: #ffffff;
+        font-size: 2.35rem;
+        line-height: 1.05;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .spcx-subtitle {
+        color: rgba(255, 255, 255, 0.74);
+        font-size: 1.02rem;
+        margin-top: 0.55rem;
+        margin-bottom: 0;
+    }
+
+    div[data-testid="stMetric"] {
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 14px;
+        padding: 0.75rem 0.9rem;
+        background: rgba(255, 255, 255, 0.035);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 FAIR_VALUE_TARGET = 63.0
 DEFAULT_TARGETS = [63, 160, 170, 190, 210, 250, 350, 450, 500]
@@ -478,7 +537,19 @@ def make_excel(snapshot, model_df, ladder_df, stats_df):
     return output.getvalue()
 
 
-st.title("SPCX Live Sale Model")
+if HERO_IMAGE.exists():
+    st.image(str(HERO_IMAGE), use_container_width=True)
+
+st.markdown(
+    """
+    <div class="spcx-hero-card">
+        <div class="spcx-eyebrow">SPCX live IPO execution dashboard</div>
+        <h1 class="spcx-title">SPCX Live Sale Model</h1>
+        <p class="spcx-subtitle">Near-live quote, $63 fair-value drawdown reference, sell-target probabilities, P/L ladder and float math in one execution screen.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 with st.sidebar:
     st.header("Controls")
@@ -751,4 +822,3 @@ st.download_button(
     file_name=f"{ticker.lower()}_live_model.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
-
