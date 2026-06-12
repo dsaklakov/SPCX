@@ -1,0 +1,1 @@
+Chart label color patch pending.
