@@ -527,8 +527,11 @@ scenario_line = alt.Chart(ladder_df).mark_line(point=True).encode(
 
 scenario_text = alt.Chart(ladder_df).mark_text(
     dy=-12,
-    fontSize=12,
+    fontSize=13,
     fontWeight="bold",
+    color="white",
+    stroke="black",
+    strokeWidth=0.35,
 ).encode(
     x=alt.X("Target sell price:Q"),
     y=alt.Y("Estimated P/L at target:Q"),
