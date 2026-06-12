@@ -17,7 +17,8 @@ except Exception:
 
 st.set_page_config(page_title="SPCX Live Model", layout="wide")
 
-DEFAULT_TARGETS = [160, 170, 190, 210, 250, 350, 450, 500]
+FAIR_VALUE_TARGET = 63
+DEFAULT_TARGETS = [63, 160, 170, 190, 210, 250, 350, 450, 500]
 DEFAULT_IPO_SHARES_SOLD = 555_560_000
 DEFAULT_IMPLIED_TOTAL_SHARES = 13_111_111_111.11
 US_MARKET_OPEN_UTC = time(13, 30)
@@ -35,6 +36,12 @@ def num(x: Optional[float]) -> str:
     if x is None or pd.isna(x):
         return "-"
     return f"{x:,.0f}"
+
+
+def percent(x: Optional[float]) -> str:
+    if x is None or pd.isna(x):
+        return "-"
+    return f"{x:.2%}"
 
 
 def get_secret(name: str) -> Optional[str]:
@@ -92,6 +99,14 @@ def clamp(x: float, low: float, high: float) -> float:
     return max(low, min(high, x))
 
 
+def target_direction(target: float, price: float) -> str:
+    if target < price:
+        return "Downside"
+    if target > price:
+        return "Upside"
+    return "At spot"
+
+
 def target_probability(
     target: float,
     price: float,
@@ -101,27 +116,65 @@ def target_probability(
     snapshot_time: str,
     horizon_minutes: float,
 ) -> float:
-    if target <= price:
+    if price <= 0:
+        return 0.0
+    if abs(target - price) < 1e-9:
         return 1.0
 
-    distance = target - price
+    direction = target_direction(target, price)
+    distance = abs(target - price)
     daily_range = max(high - low, price * 0.005, 0.01)
     elapsed = session_elapsed_minutes(snapshot_time)
 
-    # Brownian first-passage heuristic. The intraday range estimates realized volatility.
-    # This is not option-implied probability and not a guarantee.
+    # Realized-range first-passage heuristic. This is not option-implied probability.
     sigma_per_sqrt_minute = daily_range / (math.sqrt(8.0 / math.pi) * math.sqrt(max(elapsed, 1.0)))
     sigma_horizon = max(sigma_per_sqrt_minute * math.sqrt(max(horizon_minutes, 1.0)), price * 0.0025)
 
     z = distance / sigma_horizon
     p = 2.0 * (1.0 - normal_cdf(z))
 
-    momentum = 0.0
-    if daily_range > 0:
-        momentum = clamp((price - equilibrium) / daily_range, -1.0, 1.0)
+    momentum = clamp((price - equilibrium) / daily_range, -1.0, 1.0) if daily_range > 0 else 0.0
+    if direction == "Upside":
+        p *= (1.0 + 0.25 * momentum)
+    elif direction == "Downside":
+        p *= (1.0 - 0.25 * momentum)
 
-    p *= (1.0 + 0.25 * momentum)
     return clamp(p, 0.0, 0.98)
+
+
+def format_model_value(metric: str, value) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None or pd.isna(value):
+        return "-"
+    if "price" in metric.lower() or "floor" in metric.lower() or "ceiling" in metric.lower() or "equilibrium" in metric.lower() or "point" in metric.lower() or "delta" in metric.lower() or "p/l" in metric.lower() or "stop" in metric.lower() or "upside" in metric.lower() or "downside" in metric.lower():
+        if "range %" in metric.lower() or "gain" in metric.lower() or "risk to stop" in metric.lower() or "live vs open" in metric.lower():
+            return percent(value)
+        return money(value)
+    if "%" in metric or "gain" in metric.lower() or "risk to stop" in metric.lower() or "live vs open" in metric.lower():
+        return percent(value)
+    if "minutes" in metric.lower():
+        return f"{value:,.1f}"
+    return f"{value:,.3f}"
+
+
+def format_stat_value(metric: str, value) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None or pd.isna(value):
+        return "-"
+    m = metric.lower()
+    if "price" in m or "high" in m or "low" in m or m == "open":
+        return money(value)
+    if "dollar volume" in m or "market cap" in m:
+        return money(value)
+    if "volume" in m or "shares" in m:
+        return num(value)
+    if "float" in m or "held" in m or "turnover" in m:
+        return percent(value)
+    if "age" in m or "minutes" in m:
+        return f"{value:,.1f}"
+    return f"{value:,.2f}"
 
 
 def polygon_snapshot(ticker: str, api_key: str) -> Dict:
@@ -261,8 +314,10 @@ def build_model(
 
     ladder_rows = []
     for target in targets:
+        direction = target_direction(target, price)
         delta = target - price
         reward = max(delta, 0.0)
+        downside_move = max(price - target, 0.0)
         probability = target_probability(
             target=target,
             price=price,
@@ -273,19 +328,28 @@ def build_model(
             horizon_minutes=probability_horizon_minutes,
         )
         expected_value = probability * reward - (1.0 - probability) * max(risk_to_stop, 0.0)
+        if direction == "Downside":
+            action = "DOWNSIDE WATCH"
+        elif direction == "At spot":
+            action = "AT SPOT"
+        else:
+            action = "PLACE LIMIT SELL"
 
         ladder_rows.append({
             "Target sell price": target,
-            "Action": "SELL MKT NOW" if target <= price else "PLACE LIMIT SELL",
+            "Direction": direction,
+            "Action": action,
             "Current price": price,
             "Delta to target $/sh": delta,
             "Delta to target %": delta / price if price else None,
             "Reward $/sh": reward,
+            "Downside move $/sh": downside_move,
             "Stop / invalidation": stop,
             "Risk to stop $/sh": risk_to_stop,
             "Risk to stop %": risk_to_stop / price if price else None,
             "Reward / risk": reward / risk_to_stop if risk_to_stop else None,
             "Probability to target": probability,
+            "Probability label": f"{probability:.0%}",
             "Expected value $/sh": expected_value,
             "Position size": position_size,
             "Estimated P/L at target": delta * position_size,
@@ -313,6 +377,7 @@ def build_model(
         ["App refresh timestamp", snapshot["app_refresh_time"]],
         ["Quote age minutes", age],
         ["Probability horizon minutes", probability_horizon_minutes],
+        ["Fair value target", FAIR_VALUE_TARGET],
         ["Probability model", "Realized-range first-passage heuristic, not option-implied probability"],
         ["Provider", snapshot["provider"]],
     ]
@@ -348,7 +413,7 @@ with st.sidebar:
     risk_weight = st.number_input("Risk weight", min_value=0.0, max_value=2.0, value=0.35, step=0.05)
     probability_horizon_minutes = st.number_input("Probability horizon minutes", min_value=5.0, max_value=390.0, value=120.0, step=5.0)
     position_size = st.number_input("Position size", min_value=1.0, value=100.0, step=1.0)
-    targets_text = st.text_input("Sale targets", value=", ".join(str(x) for x in DEFAULT_TARGETS))
+    targets_text = st.text_input("Price reference points", value=", ".join(str(x) for x in DEFAULT_TARGETS))
     ipo_shares_sold = st.number_input("IPO shares sold", min_value=1.0, value=float(DEFAULT_IPO_SHARES_SOLD), step=1000.0)
     implied_total_shares = st.number_input("Implied total shares", min_value=1.0, value=float(DEFAULT_IMPLIED_TOTAL_SHARES), step=1000.0)
 
@@ -366,7 +431,7 @@ if auto_refresh:
 try:
     targets = [float(x.strip()) for x in targets_text.split(",") if x.strip()]
 except Exception:
-    st.error("Sale targets must be comma-separated numbers")
+    st.error("Price reference points must be comma-separated numbers")
     st.stop()
 
 manual_values = {
@@ -416,12 +481,13 @@ left, right = st.columns([1.15, 1])
 with left:
     st.subheader("Sale ladder with probability")
     st.dataframe(
-        ladder_df.style.format({
+        ladder_df.drop(columns=["Probability label"]).style.format({
             "Target sell price": "${:,.2f}",
             "Current price": "${:,.2f}",
             "Delta to target $/sh": "${:,.2f}",
             "Delta to target %": "{:.2%}",
             "Reward $/sh": "${:,.2f}",
+            "Downside move $/sh": "${:,.2f}",
             "Stop / invalidation": "${:,.2f}",
             "Risk to stop $/sh": "${:,.2f}",
             "Risk to stop %": "{:.2%}",
@@ -437,12 +503,48 @@ with left:
 
 with right:
     st.subheader("Model")
-    st.dataframe(model_df, use_container_width=True, hide_index=True)
+    display_model_df = model_df.copy()
+    display_model_df["Value"] = [
+        format_model_value(metric, value)
+        for metric, value in zip(display_model_df["Metric"], display_model_df["Value"])
+    ]
+    st.dataframe(display_model_df, use_container_width=True, hide_index=True)
+
+st.subheader("Scenario chart with probability labels")
+scenario_line = alt.Chart(ladder_df).mark_line(point=True).encode(
+    x=alt.X("Target sell price:Q", title="Target price"),
+    y=alt.Y("Estimated P/L at target:Q", title="Estimated P/L"),
+    tooltip=[
+        alt.Tooltip("Target sell price:Q", title="Target", format="$, .2f"),
+        alt.Tooltip("Direction:N", title="Direction"),
+        alt.Tooltip("Probability to target:Q", title="Probability", format=".1%"),
+        alt.Tooltip("Estimated P/L at target:Q", title="Estimated P/L", format="$, .2f"),
+        alt.Tooltip("Reward / risk:Q", title="Reward / risk", format=".2f"),
+        alt.Tooltip("Expected value $/sh:Q", title="EV $/sh", format="$, .2f"),
+        alt.Tooltip("Action:N", title="Action"),
+    ],
+)
+
+scenario_text = alt.Chart(ladder_df).mark_text(
+    dy=-12,
+    fontSize=12,
+    fontWeight="bold",
+).encode(
+    x=alt.X("Target sell price:Q"),
+    y=alt.Y("Estimated P/L at target:Q"),
+    text=alt.Text("Probability label:N"),
+)
+
+fair_value_rule = alt.Chart(pd.DataFrame({"Target sell price": [FAIR_VALUE_TARGET]})).mark_rule(strokeDash=[6, 4]).encode(
+    x=alt.X("Target sell price:Q"),
+)
+
+st.altair_chart((scenario_line + scenario_text + fair_value_rule).properties(height=400), use_container_width=True)
 
 st.subheader("Risk vs reward by target")
 risk_reward_df = ladder_df.melt(
     id_vars=["Target sell price"],
-    value_vars=["Reward $/sh", "Risk to stop $/sh"],
+    value_vars=["Reward $/sh", "Risk to stop $/sh", "Downside move $/sh"],
     var_name="Line",
     value_name="USD per share",
 )
@@ -450,7 +552,11 @@ risk_reward_chart = alt.Chart(risk_reward_df).mark_line(point=True).encode(
     x=alt.X("Target sell price:Q", title="Target price"),
     y=alt.Y("USD per share:Q", title="USD per share"),
     color=alt.Color("Line:N", title="Line"),
-    tooltip=["Target sell price", "Line", "USD per share"],
+    tooltip=[
+        alt.Tooltip("Target sell price:Q", title="Target", format="$, .2f"),
+        alt.Tooltip("Line:N", title="Line"),
+        alt.Tooltip("USD per share:Q", title="USD per share", format="$, .2f"),
+    ],
 ).properties(height=320)
 st.altair_chart(risk_reward_chart, use_container_width=True)
 
@@ -458,14 +564,26 @@ st.subheader("Near-live probability to reach target")
 prob_chart = alt.Chart(ladder_df).mark_line(point=True).encode(
     x=alt.X("Target sell price:Q", title="Target price"),
     y=alt.Y("Probability to target:Q", title="Probability", axis=alt.Axis(format="%")),
-    tooltip=["Target sell price", "Probability to target", "Reward / risk", "Expected value $/sh", "Action"],
+    tooltip=[
+        alt.Tooltip("Target sell price:Q", title="Target", format="$, .2f"),
+        alt.Tooltip("Direction:N", title="Direction"),
+        alt.Tooltip("Probability to target:Q", title="Probability", format=".1%"),
+        alt.Tooltip("Reward / risk:Q", title="Reward / risk", format=".2f"),
+        alt.Tooltip("Expected value $/sh:Q", title="EV $/sh", format="$, .2f"),
+        alt.Tooltip("Action:N", title="Action"),
+    ],
 ).properties(height=320)
 st.altair_chart(prob_chart, use_container_width=True)
 
 st.caption("Probability is a realized-range first-passage heuristic based on the current quote, intraday high/low, elapsed session time, selected horizon, and momentum position. It is not option-implied probability and not a guarantee.")
 
 st.subheader("Market stats and float math")
-st.dataframe(stats_df, use_container_width=True, hide_index=True)
+display_stats_df = stats_df.copy()
+display_stats_df["Value"] = [
+    format_stat_value(metric, value)
+    for metric, value in zip(display_stats_df["Metric"], display_stats_df["Value"])
+]
+st.dataframe(display_stats_df, use_container_width=True, hide_index=True)
 
 excel_bytes = make_excel(snapshot, model_df, ladder_df, stats_df)
 st.download_button(
