@@ -1,5 +1,6 @@
 import os
-from datetime import datetime, timezone
+import math
+from datetime import datetime, time, timezone
 from io import BytesIO
 from typing import Dict, Optional, Tuple
 
@@ -19,6 +20,9 @@ st.set_page_config(page_title="SPCX Live Model", layout="wide")
 DEFAULT_TARGETS = [160, 170, 190, 210, 250, 350, 450, 500]
 DEFAULT_IPO_SHARES_SOLD = 555_560_000
 DEFAULT_IMPLIED_TOTAL_SHARES = 13_111_111_111.11
+US_MARKET_OPEN_UTC = time(13, 30)
+US_MARKET_CLOSE_UTC = time(20, 0)
+REGULAR_SESSION_MINUTES = 390
 
 
 def money(x: Optional[float]) -> str:
@@ -63,6 +67,61 @@ def quote_age_minutes(snapshot_time: str) -> Optional[float]:
     if parsed is None:
         return None
     return max(0.0, (now_utc() - parsed).total_seconds() / 60.0)
+
+
+def session_elapsed_minutes(snapshot_time: str) -> float:
+    parsed = parse_utc_string(snapshot_time)
+    if parsed is None:
+        return 120.0
+
+    open_dt = datetime.combine(parsed.date(), US_MARKET_OPEN_UTC, tzinfo=timezone.utc)
+    close_dt = datetime.combine(parsed.date(), US_MARKET_CLOSE_UTC, tzinfo=timezone.utc)
+
+    if parsed <= open_dt:
+        return 1.0
+    if parsed >= close_dt:
+        return float(REGULAR_SESSION_MINUTES)
+    return max(1.0, (parsed - open_dt).total_seconds() / 60.0)
+
+
+def normal_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def clamp(x: float, low: float, high: float) -> float:
+    return max(low, min(high, x))
+
+
+def target_probability(
+    target: float,
+    price: float,
+    high: float,
+    low: float,
+    equilibrium: float,
+    snapshot_time: str,
+    horizon_minutes: float,
+) -> float:
+    if target <= price:
+        return 1.0
+
+    distance = target - price
+    daily_range = max(high - low, price * 0.005, 0.01)
+    elapsed = session_elapsed_minutes(snapshot_time)
+
+    # Brownian first-passage heuristic. The intraday range estimates realized volatility.
+    # This is not option-implied probability and not a guarantee.
+    sigma_per_sqrt_minute = daily_range / (math.sqrt(8.0 / math.pi) * math.sqrt(max(elapsed, 1.0)))
+    sigma_horizon = max(sigma_per_sqrt_minute * math.sqrt(max(horizon_minutes, 1.0)), price * 0.0025)
+
+    z = distance / sigma_horizon
+    p = 2.0 * (1.0 - normal_cdf(z))
+
+    momentum = 0.0
+    if daily_range > 0:
+        momentum = clamp((price - equilibrium) / daily_range, -1.0, 1.0)
+
+    p *= (1.0 + 0.25 * momentum)
+    return clamp(p, 0.0, 0.98)
 
 
 def polygon_snapshot(ticker: str, api_key: str) -> Dict:
@@ -158,7 +217,15 @@ def get_market_snapshot(provider: str, ticker: str, manual_values: Dict[str, flo
     return manual_snapshot(ticker, **manual_values), None
 
 
-def build_model(snapshot: Dict, targets, risk_weight: float, position_size: float, ipo_shares_sold: float, implied_total_shares: float):
+def build_model(
+    snapshot: Dict,
+    targets,
+    risk_weight: float,
+    position_size: float,
+    ipo_shares_sold: float,
+    implied_total_shares: float,
+    probability_horizon_minutes: float,
+):
     price = snapshot["price"]
     high = snapshot["high"]
     low = snapshot["low"]
@@ -188,23 +255,38 @@ def build_model(snapshot: Dict, targets, risk_weight: float, position_size: floa
         ["Stop / invalidation", stop],
         ["Risk to stop", risk_to_stop / price if price else None],
         ["Live vs open", price / open_price - 1 if open_price else None],
+        ["Probability horizon minutes", probability_horizon_minutes],
     ]
     model_df = pd.DataFrame(model_rows, columns=["Metric", "Value"])
 
     ladder_rows = []
     for target in targets:
         delta = target - price
-        rr = delta / risk_to_stop if risk_to_stop else None
+        reward = max(delta, 0.0)
+        probability = target_probability(
+            target=target,
+            price=price,
+            high=high,
+            low=low,
+            equilibrium=equilibrium,
+            snapshot_time=snapshot["snapshot_time"],
+            horizon_minutes=probability_horizon_minutes,
+        )
+        expected_value = probability * reward - (1.0 - probability) * max(risk_to_stop, 0.0)
+
         ladder_rows.append({
             "Target sell price": target,
             "Action": "SELL MKT NOW" if target <= price else "PLACE LIMIT SELL",
             "Current price": price,
             "Delta to target $/sh": delta,
             "Delta to target %": delta / price if price else None,
+            "Reward $/sh": reward,
             "Stop / invalidation": stop,
             "Risk to stop $/sh": risk_to_stop,
             "Risk to stop %": risk_to_stop / price if price else None,
-            "Reward / risk": rr,
+            "Reward / risk": reward / risk_to_stop if risk_to_stop else None,
+            "Probability to target": probability,
+            "Expected value $/sh": expected_value,
             "Position size": position_size,
             "Estimated P/L at target": delta * position_size,
         })
@@ -230,6 +312,8 @@ def build_model(snapshot: Dict, targets, risk_weight: float, position_size: floa
         ["Quote timestamp", snapshot["snapshot_time"]],
         ["App refresh timestamp", snapshot["app_refresh_time"]],
         ["Quote age minutes", age],
+        ["Probability horizon minutes", probability_horizon_minutes],
+        ["Probability model", "Realized-range first-passage heuristic, not option-implied probability"],
         ["Provider", snapshot["provider"]],
     ]
     stats_df = pd.DataFrame(stats_rows, columns=["Metric", "Value"])
@@ -262,6 +346,7 @@ with st.sidebar:
     if st.button("Refresh now"):
         st.rerun()
     risk_weight = st.number_input("Risk weight", min_value=0.0, max_value=2.0, value=0.35, step=0.05)
+    probability_horizon_minutes = st.number_input("Probability horizon minutes", min_value=5.0, max_value=390.0, value=120.0, step=5.0)
     position_size = st.number_input("Position size", min_value=1.0, value=100.0, step=1.0)
     targets_text = st.text_input("Sale targets", value=", ".join(str(x) for x in DEFAULT_TARGETS))
     ipo_shares_sold = st.number_input("IPO shares sold", min_value=1.0, value=float(DEFAULT_IPO_SHARES_SOLD), step=1000.0)
@@ -303,7 +388,15 @@ if warning:
 elif provider == "Yahoo/yfinance":
     st.info("Yahoo/yfinance fallback is active. The app refreshes every configured interval, but quote data can still be delayed by the provider.")
 
-model_df, ladder_df, stats_df = build_model(snapshot, targets, risk_weight, position_size, ipo_shares_sold, implied_total_shares)
+model_df, ladder_df, stats_df = build_model(
+    snapshot,
+    targets,
+    risk_weight,
+    position_size,
+    ipo_shares_sold,
+    implied_total_shares,
+    probability_horizon_minutes,
+)
 quote_age = quote_age_minutes(snapshot["snapshot_time"])
 
 kpi_cols = st.columns(6)
@@ -319,19 +412,22 @@ st.caption(
     + (f" | Auto-refresh run: {refresh_count}" if refresh_count is not None else "")
 )
 
-left, right = st.columns([1.1, 1])
+left, right = st.columns([1.15, 1])
 with left:
-    st.subheader("Sale ladder")
+    st.subheader("Sale ladder with probability")
     st.dataframe(
         ladder_df.style.format({
             "Target sell price": "${:,.2f}",
             "Current price": "${:,.2f}",
             "Delta to target $/sh": "${:,.2f}",
             "Delta to target %": "{:.2%}",
+            "Reward $/sh": "${:,.2f}",
             "Stop / invalidation": "${:,.2f}",
             "Risk to stop $/sh": "${:,.2f}",
             "Risk to stop %": "{:.2%}",
             "Reward / risk": "{:.2f}",
+            "Probability to target": "{:.1%}",
+            "Expected value $/sh": "${:,.2f}",
             "Position size": "{:,.0f}",
             "Estimated P/L at target": "${:,.2f}",
         }),
@@ -343,13 +439,30 @@ with right:
     st.subheader("Model")
     st.dataframe(model_df, use_container_width=True, hide_index=True)
 
-st.subheader("Scenario chart")
-chart = alt.Chart(ladder_df).mark_line(point=True).encode(
-    x=alt.X("Target sell price:Q", title="Target sell price"),
-    y=alt.Y("Estimated P/L at target:Q", title="Estimated P/L"),
-    tooltip=["Target sell price", "Estimated P/L at target", "Reward / risk", "Action"],
-).properties(height=360)
-st.altair_chart(chart, use_container_width=True)
+st.subheader("Risk vs reward by target")
+risk_reward_df = ladder_df.melt(
+    id_vars=["Target sell price"],
+    value_vars=["Reward $/sh", "Risk to stop $/sh"],
+    var_name="Line",
+    value_name="USD per share",
+)
+risk_reward_chart = alt.Chart(risk_reward_df).mark_line(point=True).encode(
+    x=alt.X("Target sell price:Q", title="Target price"),
+    y=alt.Y("USD per share:Q", title="USD per share"),
+    color=alt.Color("Line:N", title="Line"),
+    tooltip=["Target sell price", "Line", "USD per share"],
+).properties(height=320)
+st.altair_chart(risk_reward_chart, use_container_width=True)
+
+st.subheader("Near-live probability to reach target")
+prob_chart = alt.Chart(ladder_df).mark_line(point=True).encode(
+    x=alt.X("Target sell price:Q", title="Target price"),
+    y=alt.Y("Probability to target:Q", title="Probability", axis=alt.Axis(format="%")),
+    tooltip=["Target sell price", "Probability to target", "Reward / risk", "Expected value $/sh", "Action"],
+).properties(height=320)
+st.altair_chart(prob_chart, use_container_width=True)
+
+st.caption("Probability is a realized-range first-passage heuristic based on the current quote, intraday high/low, elapsed session time, selected horizon, and momentum position. It is not option-implied probability and not a guarantee.")
 
 st.subheader("Market stats and float math")
 st.dataframe(stats_df, use_container_width=True, hide_index=True)
