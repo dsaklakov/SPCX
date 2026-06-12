@@ -349,7 +349,14 @@ def build_model(
             "Risk to stop %": risk_to_stop / price if price else None,
             "Reward / risk": reward / risk_to_stop if risk_to_stop else None,
             "Probability to target": probability,
-            "Probability label": f"{probability:.0%}",
+           "Probability label": (
+    f"FV/DD {probability:.1%}" if abs(target - FAIR_VALUE_TARGET) < 1e-9
+    else f"Support {probability:.1%}" if target < price
+    else f"Active {probability:.1%}" if probability >= 0.50
+    else f"Watch {probability:.1%}" if probability >= 0.15
+    else f"Stretch {probability:.1%}" if probability >= 0.03
+    else f"Tail {probability:.1%}"
+),,
             "Expected value $/sh": expected_value,
             "Position size": position_size,
             "Estimated P/L at target": delta * position_size,
