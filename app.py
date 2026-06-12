@@ -356,7 +356,7 @@ def build_model(
     else f"Watch {probability:.1%}" if probability >= 0.15
     else f"Stretch {probability:.1%}" if probability >= 0.03
     else f"Tail {probability:.1%}"
-),,
+),
             "Expected value $/sh": expected_value,
             "Position size": position_size,
             "Estimated P/L at target": delta * position_size,
