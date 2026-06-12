@@ -517,7 +517,7 @@ with right:
     ]
     st.dataframe(display_model_df, use_container_width=True, hide_index=True)
 
-st.subheader("Scenario chart with probability labels")
+st.subheader("Scenario chart - practical execution zones")
 scenario_line = alt.Chart(ladder_df).mark_line(point=True).encode(
     x=alt.X("Target sell price:Q", title="Target price"),
     y=alt.Y("Estimated P/L at target:Q", title="Estimated P/L"),
