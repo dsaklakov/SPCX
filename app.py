@@ -17,6 +17,42 @@ except Exception:
 
 
 st.set_page_config(page_title="SPCX Live Model", layout="wide")
+st.markdown("""
+<style>
+
+.stApp {
+    background: #050505;
+}
+
+[data-testid="stSidebar"] {
+    background: #0B0B0B;
+}
+
+[data-testid="stMetric"] {
+    background: #111111;
+    border: 1px solid #222222;
+    border-radius: 12px;
+    padding: 10px;
+}
+
+div[data-testid="stDataFrame"] {
+    background: #111111;
+}
+
+h1,h2,h3 {
+    color: #E5E5E5 !important;
+}
+
+p,span,label {
+    color: #CFCFCF !important;
+}
+
+section[data-testid="stSidebar"] * {
+    color: #D9D9D9 !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 APP_DIR = Path(__file__).resolve().parent
 HERO_IMAGE = APP_DIR / "assets" / "spacex_ipo_robotech.png"
@@ -536,10 +572,33 @@ def make_excel(snapshot, model_df, ladder_df, stats_df):
 
     return output.getvalue()
 
-
 if HERO_IMAGE.exists():
     st.image(str(HERO_IMAGE), use_container_width=True)
 
+st.markdown("""
+<div style="
+text-align:center;
+margin-top:-30px;
+margin-bottom:25px;
+">
+<h1 style="
+font-size:42px;
+font-weight:700;
+color:#E5E5E5;
+margin-bottom:5px;
+">
+SPCX LIVE TRADING MODEL
+</h1>
+
+<div style="
+font-size:18px;
+color:#A0A0A0;
+">
+Real-Time Probability • Risk / Reward • Float Analysis
+</div>
+
+</div>
+""", unsafe_allow_html=True)
 st.markdown(
     """
     <div class="spcx-hero-card">
