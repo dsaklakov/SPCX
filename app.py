@@ -304,13 +304,30 @@ def yahoo_snapshot(ticker):
     if yf is None:
         raise RuntimeError("yfinance is not installed")
 
-    history = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=False)
+    ticker_obj = yf.Ticker(ticker)
+
+    history = ticker_obj.history(
+        period="1d",
+        interval="1m",
+        prepost=True
+    )
 
     if history.empty:
-        history = yf.Ticker(ticker).history(period="5d", interval="1d")
+        history = ticker_obj.history(
+            period="5d",
+            interval="1d"
+        )
 
     if history.empty:
         raise RuntimeError("Yahoo/yfinance returned no data")
+
+    fast = ticker_obj.fast_info
+
+    price = (
+        fast.get("lastPrice")
+        or fast.get("last_price")
+        or float(history.iloc[-1]["Close"])
+    )
 
     last = history.iloc[-1]
     timestamp = history.index[-1]
@@ -323,7 +340,7 @@ def yahoo_snapshot(ticker):
     return {
         "provider": "Yahoo/yfinance",
         "ticker": ticker,
-        "price": float(last["Close"]),
+        "price": float(price),
         "open": float(history["Open"].iloc[0]),
         "high": float(history["High"].max()),
         "low": float(history["Low"].min()),
@@ -331,7 +348,6 @@ def yahoo_snapshot(ticker):
         "snapshot_time": snapshot_time,
         "app_refresh_time": now_text(),
     }
-
 
 def manual_snapshot(ticker, price, high, low, open_price, volume):
     return {
