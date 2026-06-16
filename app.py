@@ -751,6 +751,103 @@ def recommendation_from_score(score):
     return "SELL 55%"
 
 
+def sell_pressure_label(score):
+    if score < 13:
+        return "MINIMAL"
+    if score < 21:
+        return "LOW"
+    if score < 34:
+        return "ELEVATED"
+    if score < 55:
+        return "MODERATE"
+    if score < 89:
+        return "HIGH"
+    return "EXTREME"
+
+
+def model_implied_sale_pct(action):
+    if action == "SELL 13%":
+        return "13%"
+    if action == "SELL 21%":
+        return "21%"
+    if action == "SELL 34%":
+        return "34%"
+    if action == "SELL 55%":
+        return "55%"
+    return "0%"
+
+
+def action_status(action, confidence_score):
+    if confidence_score < 50:
+        if action.startswith("SELL"):
+            return "WATCH / MODEL SIGNAL ONLY"
+        return "WATCH"
+    if confidence_score < 65:
+        if action.startswith("SELL"):
+            return "WATCH / PREPARE LIMITS"
+        return "WATCH"
+    if confidence_score < 80:
+        if action.startswith("SELL"):
+            return "CONDITIONAL PARTIAL TRIM"
+        return "ACTIONABLE WATCH"
+    if action.startswith("SELL"):
+        return "ACTIONABLE"
+    return "HOLD"
+
+
+def block_label(block_name, score):
+    if block_name == "Market":
+        if score < 13:
+            return "NO SELL SIGNAL"
+        if score < 21:
+            return "WEAK SELL SIGNAL"
+        if score < 34:
+            return "WATCH"
+        if score < 55:
+            return "TRIM"
+        if score < 89:
+            return "SELL PRESSURE"
+        return "EXTREME SELL PRESSURE"
+
+    if block_name == "Portfolio":
+        if score < 13:
+            return "LOW EXPOSURE"
+        if score < 21:
+            return "MANAGEABLE"
+        if score < 34:
+            return "ELEVATED"
+        if score < 55:
+            return "ELEVATED"
+        if score < 89:
+            return "HIGH"
+        return "CRITICAL"
+
+    if block_name == "Business / Judgment":
+        if score < 13:
+            return "VERY LOW"
+        if score < 21:
+            return "LOW"
+        if score < 34:
+            return "MODERATE-LOW"
+        if score < 55:
+            return "MODERATE"
+        if score < 89:
+            return "HIGH"
+        return "EXTREME"
+
+    return "N/A"
+
+
+def top_driver_text(sell_engine_df, rank):
+    if sell_engine_df is None or sell_engine_df.empty:
+        return "N/A"
+    ranked = sell_engine_df.sort_values("Contribution", ascending=False).reset_index(drop=True)
+    if len(ranked) <= rank:
+        return "N/A"
+    row = ranked.iloc[rank]
+    return f"{row['Factor']} ({row['Contribution']:.1f})"
+
+
 def action_palette(action):
     if action == "HOLD":
         return "#1f9d55", "#071a10"
@@ -767,49 +864,80 @@ def action_palette(action):
     return "#9ca3af", "#111111"
 
 
-def render_action_banner(action, score):
+def render_action_banner(action, score, confidence_score=None, sell_engine_df=None):
+    pressure = sell_pressure_label(score)
+    implied_sale = model_implied_sale_pct(action)
+    status = action_status(action, confidence_score if confidence_score is not None else 0)
     accent, background = action_palette(action)
+
+    primary_driver = top_driver_text(sell_engine_df, 0)
+    secondary_driver = top_driver_text(sell_engine_df, 1)
+
+    confidence_text = "N/A" if confidence_score is None else f"{confidence_score:.0f}%"
+
     st.markdown(
         f"""
         <div style="
             margin-top: 0.35rem;
             margin-bottom: 1.1rem;
-            padding: 1.05rem 1.25rem;
-            border-radius: 16px;
-            border: 1px solid {accent};
+            padding: 1.15rem 1.35rem;
+            border-radius: 18px;
+            border: 1.5px solid {accent};
             background: linear-gradient(135deg, {background}, #090909);
-            box-shadow: 0 0 28px rgba(0,0,0,0.38);
+            box-shadow: 0 0 34px rgba(0,0,0,0.45);
         ">
             <div style="
                 color: #A9A9A9;
-                font-size: 0.82rem;
-                letter-spacing: 0.14em;
+                font-size: 0.80rem;
+                letter-spacing: 0.16em;
                 text-transform: uppercase;
-                margin-bottom: 0.35rem;
+                margin-bottom: 0.55rem;
             ">
-                Recommended action
+                Sell Decision Engine
             </div>
             <div style="
-                color: {accent};
-                font-size: 3.1rem;
-                line-height: 1.0;
-                font-weight: 800;
-                white-space: nowrap;
+                display:grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 14px;
+                margin-bottom: 1.0rem;
             ">
-                {action}
+                <div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Sell Pressure</div>
+                    <div style="color:{accent};font-size:2.05rem;font-weight:850;white-space:nowrap;">{pressure}</div>
+                </div>
+                <div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Model-Implied Sale</div>
+                    <div style="color:#F9FAFB;font-size:2.05rem;font-weight:850;white-space:nowrap;">{implied_sale}</div>
+                </div>
+                <div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Action Status</div>
+                    <div style="color:#F9FAFB;font-size:1.35rem;font-weight:800;white-space:nowrap;">{status}</div>
+                </div>
+                <div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Confidence</div>
+                    <div style="color:#F9FAFB;font-size:2.05rem;font-weight:850;white-space:nowrap;">{confidence_text}</div>
+                </div>
             </div>
             <div style="
-                color: #D1D5DB;
-                font-size: 0.95rem;
-                margin-top: 0.55rem;
+                display:grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 14px;
+                border-top:1px solid rgba(255,255,255,0.12);
+                padding-top:0.85rem;
             ">
-                Current Engine Score: {score:.1f}
+                <div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Primary Driver</div>
+                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;">{primary_driver}</div>
+                </div>
+                <div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Secondary Driver</div>
+                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;">{secondary_driver}</div>
+                </div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
 
 def compute_expected_upside_pct(current_price, targets, probabilities):
     if current_price <= 0:
@@ -1213,18 +1341,26 @@ st.subheader("SELL DECISION ENGINE V1.1 AUTO MARKET")
 
 action = recommendation_from_score(sell_engine_score)
 
-engine_cols = st.columns(6)
-engine_cols[0].metric("Implemented Weight", f"{sell_engine_weight:.0f}%")
-engine_cols[1].metric("Total Contribution", f"{sell_engine_partial:.1f} / {sell_engine_weight:.0f}")
-engine_cols[2].metric("Current Engine Score", f"{sell_engine_score:.1f}")
-engine_cols[3].metric("Market Score", f"{block_scores.get('Market', 0.0):.1f}")
-engine_cols[4].metric("Portfolio Score", f"{block_scores.get('Portfolio', 0.0):.1f}")
-engine_cols[5].metric("Confidence", f"{confidence_score:.0f}%")
+render_action_banner(
+    action,
+    sell_engine_score,
+    confidence_score=confidence_score,
+    sell_engine_df=sell_engine_df,
+)
 
-render_action_banner(action, sell_engine_score)
+investor_cols = st.columns(3)
+investor_cols[0].metric("Market View", block_label("Market", block_scores.get("Market", 0.0)))
+investor_cols[1].metric("Position Risk", block_label("Portfolio", block_scores.get("Portfolio", 0.0)))
+investor_cols[2].metric("Business Risk", block_label("Business / Judgment", block_scores.get("Business / Judgment", 0.0)))
 
-business_cols = st.columns(1)
-business_cols[0].metric("Business / Judgment Score", f"{block_scores.get('Business / Judgment', 0.0):.1f}")
+with st.expander("Model diagnostics", expanded=False):
+    diag_cols = st.columns(6)
+    diag_cols[0].metric("Implemented Weight", f"{sell_engine_weight:.0f}%")
+    diag_cols[1].metric("Sell Pressure Score", f"{sell_engine_score:.1f} / 100")
+    diag_cols[2].metric("Market Score", f"{block_scores.get('Market', 0.0):.1f}")
+    diag_cols[3].metric("Portfolio Score", f"{block_scores.get('Portfolio', 0.0):.1f}")
+    diag_cols[4].metric("Business Score", f"{block_scores.get('Business / Judgment', 0.0):.1f}")
+    diag_cols[5].metric("Confidence", f"{confidence_score:.0f}%")
 
 if market_inputs["notes"]:
     st.caption("Market data notes: " + " | ".join(market_inputs["notes"]))
@@ -1245,7 +1381,7 @@ st.dataframe(
 )
 
 st.caption(
-    "Sell Engine V1.1 uses all 12 factors with 100% total model weight. Yahoo history is used for market factors when available; sidebar values remain fallback inputs. Expected Upside is a heuristic based on target reach probabilities, not option-implied EV."
+    "Sell Engine V1.1 converts the 12-factor model into an investor-facing sell pressure, model-implied sale percentage, action status, and confidence level. Yahoo history is used for market factors when available; sidebar values remain fallback inputs."
 )
 
 if not fair_value_df.empty:
