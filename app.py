@@ -35,7 +35,15 @@ except Exception as exc:
     st.stop()
 
 
-st.set_page_config(page_title="SPCX Live Model", layout="wide")
+APP_DIR = Path(__file__).resolve().parent
+FAVICON = APP_DIR / "assets" / "SPCX_Robotech_Favicon_192.png"
+HERO_IMAGE = APP_DIR / "assets" / "spacex_ipo_robotech.png"
+
+st.set_page_config(
+    page_title="SPCX Live Model",
+    page_icon=str(FAVICON),
+    layout="wide",
+)
 
 st.markdown(
     """
@@ -115,9 +123,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-APP_DIR = Path(__file__).resolve().parent
-HERO_IMAGE = APP_DIR / "assets" / "spacex_ipo_robotech.png"
 
 FAIR_VALUE_TARGET = 63.0
 DEFAULT_TARGETS = [63, 160, 170, 190, 210, 250, 350, 450, 500]
@@ -1659,3 +1664,4 @@ st.download_button(
     file_name=f"{ticker.lower()}_live_model.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
