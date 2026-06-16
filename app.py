@@ -867,20 +867,7 @@ def action_palette(action):
 def render_action_banner(action, score, confidence_score=None, sell_engine_df=None):
     pressure = sell_pressure_label(score)
     implied_sale = model_implied_sale_pct(action)
-    def action_status(action, confidence_score):
-    if confidence_score < 50:
-        return "WATCH"
-
-    if confidence_score < 65:
-        return "PREPARE"
-
-    if confidence_score < 80:
-        return "PARTIAL TRIM"
-
-    if action.startswith("SELL"):
-        return "ACTIONABLE"
-
-    return "HOLD"
+    status = action_status(action, confidence_score if confidence_score is not None else 0)
     accent, background = action_palette(action)
 
     primary_driver = top_driver_text(sell_engine_df, 0)
@@ -1674,4 +1661,3 @@ st.download_button(
     file_name=f"{ticker.lower()}_live_model.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
-
