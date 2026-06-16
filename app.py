@@ -15,6 +15,56 @@ try:
 except Exception:
     yf = None
 
+try:
+    from sell_engine import (
+        score_valuation,
+        score_expected_upside,
+        score_momentum,
+    )
+except Exception:
+    def score_valuation(current_price, fair_value):
+        if fair_value <= 0:
+            return 0
+        premium = (current_price - fair_value) / fair_value * 100
+        if premium <= 34:
+            return 20
+        if premium <= 55:
+            return 40
+        if premium <= 89:
+            return 60
+        if premium <= 144:
+            return 80
+        return 100
+
+    def score_expected_upside(current_price, targets, probabilities):
+        if current_price <= 0:
+            return 0
+        ev = sum(prob * (target - current_price) for target, prob in zip(targets, probabilities))
+        ev_pct = ev / current_price * 100
+        if ev_pct < -10:
+            return 100
+        if ev_pct < 0:
+            return 80
+        if ev_pct < 5:
+            return 60
+        if ev_pct < 10:
+            return 40
+        return 20
+
+    def score_momentum(current_price, price_5d):
+        if price_5d <= 0:
+            return 0
+        momentum = (current_price - price_5d) / price_5d * 100
+        if momentum < 21:
+            return 20
+        if momentum < 34:
+            return 40
+        if momentum < 55:
+            return 60
+        if momentum < 89:
+            return 80
+        return 100
+
 
 st.set_page_config(page_title="SPCX Live Model", layout="wide")
 st.markdown("""
@@ -588,6 +638,74 @@ def make_excel(snapshot, model_df, ladder_df, stats_df):
 
     return output.getvalue()
 
+
+def recommendation_from_score(score):
+    if score < 13:
+        return "HOLD"
+    if score < 21:
+        return "PREPARE LIMIT ORDERS"
+    if score < 34:
+        return "SELL 13%"
+    if score < 55:
+        return "SELL 21%"
+    if score < 89:
+        return "SELL 34%"
+    return "SELL 55%"
+
+
+def compute_expected_upside_pct(current_price, targets, probabilities):
+    if current_price <= 0:
+        return 0.0
+    ev = 0.0
+    for target, probability in zip(targets, probabilities):
+        ev += probability * (target - current_price)
+    return ev / current_price * 100.0
+
+
+def build_sell_engine_table(current_price, fair_value, sell_targets, sell_probabilities, price_5d):
+    valuation_score = score_valuation(current_price, fair_value)
+    upside_score = score_expected_upside(current_price, sell_targets, sell_probabilities)
+    momentum_score = score_momentum(current_price, price_5d)
+
+    valuation_raw = ((current_price - fair_value) / fair_value * 100.0) if fair_value > 0 else 0.0
+    expected_upside_raw = compute_expected_upside_pct(current_price, sell_targets, sell_probabilities)
+    momentum_raw = ((current_price - price_5d) / price_5d * 100.0) if price_5d > 0 else 0.0
+
+    rows = [
+        {
+            "Block": "Market",
+            "Factor": "Valuation",
+            "Raw Value": f"{valuation_raw:.1f}%",
+            "Score": valuation_score,
+            "Weight": 10.0,
+            "Contribution": valuation_score * 10.0 / 100.0,
+        },
+        {
+            "Block": "Market",
+            "Factor": "Expected Upside",
+            "Raw Value": f"{expected_upside_raw:.1f}%",
+            "Score": upside_score,
+            "Weight": 9.0,
+            "Contribution": upside_score * 9.0 / 100.0,
+        },
+        {
+            "Block": "Market",
+            "Factor": "Momentum",
+            "Raw Value": f"{momentum_raw:.1f}%",
+            "Score": momentum_score,
+            "Weight": 8.0,
+            "Contribution": momentum_score * 8.0 / 100.0,
+        },
+    ]
+
+    sell_engine_df = pd.DataFrame(rows)
+    implemented_weight = float(sell_engine_df["Weight"].sum())
+    implemented_contribution = float(sell_engine_df["Contribution"].sum())
+    normalized_score = implemented_contribution / implemented_weight * 100.0 if implemented_weight else 0.0
+
+    return sell_engine_df, implemented_contribution, implemented_weight, normalized_score
+
+
 if HERO_IMAGE.exists():
     st.image(str(HERO_IMAGE), use_container_width=True)
 
@@ -703,6 +821,22 @@ with st.sidebar:
         "volume": st.number_input("Manual volume", min_value=0.0, value=315_425_119.0, step=1000.0),
     }
 
+    st.subheader("Sell Engine inputs")
+
+    fair_value_input = st.number_input(
+        "Fair value for Sell Engine",
+        min_value=0.01,
+        value=float(FAIR_VALUE_TARGET),
+        step=1.0,
+    )
+
+    price_5d_input = st.number_input(
+        "Reference price for momentum",
+        min_value=0.01,
+        value=135.00,
+        step=0.01,
+    )
+
 refresh_count = None
 
 if auto_refresh:
@@ -787,6 +921,41 @@ with right:
 
 sell_ladder_df = ladder_df[ladder_df["Target sell price"] > snapshot["price"]].copy()
 fair_value_df = ladder_df[ladder_df["Target sell price"] == FAIR_VALUE_TARGET].copy()
+
+sell_engine_targets = sell_ladder_df["Target sell price"].astype(float).tolist()
+sell_engine_probabilities = sell_ladder_df["Probability to target"].astype(float).tolist()
+
+sell_engine_df, sell_engine_partial, sell_engine_weight, sell_engine_score = build_sell_engine_table(
+    current_price=float(snapshot["price"]),
+    fair_value=float(fair_value_input),
+    sell_targets=sell_engine_targets,
+    sell_probabilities=sell_engine_probabilities,
+    price_5d=float(price_5d_input),
+)
+
+st.subheader("SELL DECISION ENGINE V1")
+
+engine_cols = st.columns(4)
+engine_cols[0].metric("Implemented Weight", f"{sell_engine_weight:.0f}%")
+engine_cols[1].metric("Partial Contribution", f"{sell_engine_partial:.1f}")
+engine_cols[2].metric("Normalized Score", f"{sell_engine_score:.1f}")
+engine_cols[3].metric("Action", recommendation_from_score(sell_engine_score))
+
+st.dataframe(
+    sell_engine_df.style.format(
+        {
+            "Score": "{:.0f}",
+            "Weight": "{:.1f}",
+            "Contribution": "{:.2f}",
+        }
+    ),
+    use_container_width=True,
+    hide_index=True,
+)
+
+st.caption(
+    "Sell Engine V1 currently uses the first implemented market factors: Valuation, Expected Upside, and Momentum. Remaining factors will be added after this core pipeline is verified."
+)
 
 if not fair_value_df.empty:
     fair_value_row = fair_value_df.iloc[0]
