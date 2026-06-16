@@ -452,12 +452,16 @@ def derive_market_factor_inputs(
         result["notes"].append("5d return uses sidebar fallback because fewer than 6 closes are available.")
 
     if "Volume" in history.columns and not history["Volume"].dropna().empty:
-        volumes = history["Volume"].astype(float)
-        result["avg_volume_20d"] = float(volumes.tail(20).mean())
+        result["avg_volume_20d"] = float(history["Volume"].astype(float).tail(20).mean())
     else:
         result["notes"].append("Average volume uses sidebar fallback because volume history is unavailable.")
 
-    log_returns = (closes / closes.shift(1)).apply(lambda x: math.log(x) if x > 0 else None).dropna()
+    log_returns = []
+    for value in (closes / closes.shift(1)).dropna():
+        if value > 0:
+            log_returns.append(math.log(float(value)))
+
+    log_returns = pd.Series(log_returns)
 
     if len(log_returns) >= 10:
         vol_10d = float(log_returns.tail(10).std())
@@ -709,7 +713,6 @@ def make_excel(snapshot, model_df, ladder_df, stats_df, sell_engine_df, confiden
         ladder_df.to_excel(writer, index=False, sheet_name="Market Sales")
         stats_df.to_excel(writer, index=False, sheet_name="Market Stats")
         sell_engine_df.to_excel(writer, index=False, sheet_name="Sell Engine")
-
         pd.DataFrame(
             [
                 ["Confidence Score", confidence_score],
@@ -717,7 +720,6 @@ def make_excel(snapshot, model_df, ladder_df, stats_df, sell_engine_df, confiden
             ],
             columns=["Metric", "Value"],
         ).to_excel(writer, index=False, sheet_name="Confidence")
-
         pd.DataFrame(
             [
                 ["price_5d", None if market_inputs is None else market_inputs.get("price_5d")],
@@ -924,7 +926,7 @@ st.markdown(
     <div class="spcx-hero-card">
         <div class="spcx-eyebrow">SPCX live IPO execution dashboard</div>
         <h1 class="spcx-title">SPCX Live Sale Model</h1>
-        <p class="spcx-subtitle">Near-live quote, $63 fair-value drawdown reference, sell-target probabilities, P/L ladder, float math, and Sell Decision Engine V1.1 Auto Market.</p>
+        <p class="spcx-subtitle">Near-live quote, $63 fair-value drawdown reference, sell-target probabilities, P/L ladder, float math, and Sell Decision Engine V1.2.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1166,9 +1168,9 @@ position_value = float(snapshot["price"]) * float(position_size)
 
 market_inputs = derive_market_factor_inputs(
     ticker=ticker,
-    fallback_price_5d=float(market_inputs["price_5d"]),
-    fallback_volatility_ratio=float(market_inputs["volatility_ratio"]),
-    fallback_avg_volume_20d=float(market_inputs["avg_volume_20d"]),
+    fallback_price_5d=float(price_5d_input),
+    fallback_volatility_ratio=float(volatility_ratio_input),
+    fallback_avg_volume_20d=float(avg_volume_20d_input),
     fallback_return_1d=float(price_return_1d_input),
     fallback_return_3d=float(price_return_3d_input),
     fallback_return_5d=float(price_return_5d_input),
@@ -1243,7 +1245,7 @@ st.dataframe(
 )
 
 st.caption(
-    "Sell Engine V1.1 uses all 12 factors with 100% total model weight. Market factors use Yahoo history when available and sidebar values as fallback. Expected Upside is a heuristic based on target reach probabilities, not option-implied EV."
+    "Sell Engine V1.1 uses all 12 factors with 100% total model weight. Yahoo history is used for market factors when available; sidebar values remain fallback inputs. Expected Upside is a heuristic based on target reach probabilities, not option-implied EV."
 )
 
 if not fair_value_df.empty:
@@ -1364,4 +1366,5 @@ st.download_button(
     file_name=f"{ticker.lower()}_live_model.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
 
