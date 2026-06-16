@@ -779,19 +779,19 @@ def model_implied_sale_pct(action):
 
 def action_status(action, confidence_score):
     if confidence_score < 50:
-        if action.startswith("SELL"):
-            return "WATCH / MODEL SIGNAL ONLY"
         return "WATCH"
+
     if confidence_score < 65:
-        if action.startswith("SELL"):
-            return "WATCH / PREPARE LIMITS"
-        return "WATCH"
+        return "PREPARE"
+
     if confidence_score < 80:
         if action.startswith("SELL"):
-            return "CONDITIONAL PARTIAL TRIM"
-        return "ACTIONABLE WATCH"
+            return "PARTIAL TRIM"
+        return "WATCH"
+
     if action.startswith("SELL"):
         return "ACTIONABLE"
+
     return "HOLD"
 
 
@@ -911,7 +911,7 @@ def render_action_banner(action, score, confidence_score=None, sell_engine_df=No
                 </div>
                 <div>
                     <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Action Status</div>
-                    <div style="color:#F9FAFB;font-size:1.35rem;font-weight:800;white-space:nowrap;">{status}</div>
+                    <div style="color:#F9FAFB;font-size:1.35rem;font-weight:800;white-space:normal;overflow-wrap:anywhere;line-height:1.15;">{status}</div>
                 </div>
                 <div>
                     <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Confidence</div>
@@ -1158,7 +1158,7 @@ def build_sell_engine_table(
         {"Block": "Portfolio", "Factor": "Portfolio Concentration", "Raw Value": f"{position_pct:.1f}% portfolio, {concentration_ratio:.2f}x second position", "Score": concentration_score, "Weight": 13.0},
         {"Block": "Business / Judgment", "Factor": "Event Risk", "Raw Value": f"severity {event_severity:.1f}, p {event_probability:.2f}, {days_to_event:.0f} days", "Score": event_score, "Weight": 7.0},
         {"Block": "Business / Judgment", "Factor": "Narrative Risk", "Raw Value": f"{narrative_risk_manual:.0f} manual score", "Score": narrative_score, "Weight": 6.0},
-        {"Block": "Business / Judgment", "Factor": "Execution Risk", "Raw Value": f"Starship {starship_status_risk:.0f}, cadence {launch_cadence_risk:.0f}, NASA {nasa_dependence_risk:.0f}, defense {defense_contracts_risk:.0f}", "Score": execution_score, "Weight": 8.0},
+        {"Block": "Business / Judgment", "Factor": "Business Development Factors", "Raw Value": f"Manual score {execution_score:.1f}", "Score": execution_score, "Weight": 8.0},
     ]
 
     sell_engine_df = pd.DataFrame(rows)
@@ -1351,10 +1351,7 @@ with st.sidebar:
 
     narrative_risk_input = st.slider("Narrative risk manual score", 0.0, 100.0, 50.0, 1.0)
 
-    starship_status_risk_input = st.slider("Starship status risk", 0.0, 100.0, 50.0, 1.0)
-    launch_cadence_risk_input = st.slider("Launch cadence risk", 0.0, 100.0, 40.0, 1.0)
-    nasa_dependence_risk_input = st.slider("NASA dependence risk", 0.0, 100.0, 35.0, 1.0)
-    defense_contracts_risk_input = st.slider("Defense contracts risk", 0.0, 100.0, 45.0, 1.0)
+    business_development_risk_input = st.slider("Business Development Factors", 0.0, 100.0, 45.0, 1.0)
 
 refresh_count = None
 
@@ -1489,10 +1486,10 @@ sell_engine_df, sell_engine_partial, sell_engine_weight, sell_engine_score, bloc
     event_probability=float(event_probability_input),
     days_to_event=float(days_to_event_input),
     narrative_risk_manual=float(narrative_risk_input),
-    starship_status_risk=float(starship_status_risk_input),
-    launch_cadence_risk=float(launch_cadence_risk_input),
-    nasa_dependence_risk=float(nasa_dependence_risk_input),
-    defense_contracts_risk=float(defense_contracts_risk_input),
+    starship_status_risk=float(business_development_risk_input),
+    launch_cadence_risk=float(business_development_risk_input),
+    nasa_dependence_risk=float(business_development_risk_input),
+    defense_contracts_risk=float(business_development_risk_input),
     previous_target_probabilities=previous_target_probabilities,
 )
 
@@ -1521,11 +1518,12 @@ with st.expander("Model diagnostics", expanded=False):
     diag_cols[4].metric("Business Score", f"{block_scores.get('Business / Judgment', 0.0):.1f}")
     diag_cols[5].metric("Confidence", f"{confidence_score:.0f}%")
 
-if market_inputs["notes"]:
-    st.caption("Market data notes: " + " | ".join(market_inputs["notes"]))
+with st.expander("Data quality notes", expanded=False):
+    if market_inputs["notes"]:
+        st.caption("Market data notes: " + " | ".join(market_inputs["notes"]))
 
-if confidence_notes:
-    st.caption("Confidence notes: " + " | ".join(confidence_notes))
+    if confidence_notes:
+        st.caption("Confidence notes: " + " | ".join(confidence_notes))
 
 st.dataframe(
     sell_engine_df.style.format(
@@ -1540,7 +1538,7 @@ st.dataframe(
 )
 
 st.caption(
-    "Sell Engine V1.2 converts the 12-factor model into an investor-facing sell pressure, model-implied sale percentage, action status, and confidence level. Yahoo history is used for market factors when available; sidebar values remain fallback inputs."
+    "Sell Engine V1.2 converts the factor model into sell pressure, model-implied sale percentage, action status, and driver analysis. Data-quality notes are moved into diagnostics."
 )
 
 if not fair_value_df.empty:
