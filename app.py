@@ -949,6 +949,134 @@ def compute_expected_upside_pct(current_price, targets, probabilities):
     return ev / current_price * 100.0
 
 
+def score_market_structure_deterioration(
+    current_price,
+    day_high,
+    sell_targets,
+    sell_probabilities,
+    previous_target_probabilities,
+):
+    if current_price <= 0:
+        return 0.0
+
+    probability_scores = []
+
+    for target, current_probability in zip(sell_targets, sell_probabilities):
+        previous_probability = previous_target_probabilities.get(float(target), None)
+        if previous_probability is None or previous_probability <= 0:
+            continue
+
+        collapse = 1.0 - float(current_probability) / float(previous_probability)
+
+        if collapse >= 0.90:
+            probability_scores.append(100)
+        elif collapse >= 0.80:
+            probability_scores.append(80)
+        elif collapse >= 0.60:
+            probability_scores.append(60)
+        elif collapse >= 0.40:
+            probability_scores.append(40)
+        elif collapse >= 0.20:
+            probability_scores.append(20)
+        else:
+            probability_scores.append(0)
+
+    probability_collapse_score = max(probability_scores) if probability_scores else 0.0
+
+    target_attrition_score = 0.0
+    tracked_targets = 0
+    dead_targets = 0
+
+    for target, current_probability in zip(sell_targets, sell_probabilities):
+        previous_probability = previous_target_probabilities.get(float(target), None)
+        if previous_probability is None:
+            continue
+
+        if previous_probability >= 0.15:
+            tracked_targets += 1
+            if current_probability < 0.03:
+                dead_targets += 1
+
+    if tracked_targets > 0:
+        target_attrition_score = dead_targets / tracked_targets * 100.0
+
+    high_watermark_retreat_pct = 0.0
+    if day_high > 0 and current_price < day_high:
+        high_watermark_retreat_pct = (day_high - current_price) / day_high * 100.0
+
+    if high_watermark_retreat_pct >= 20:
+        high_watermark_score = 100
+    elif high_watermark_retreat_pct >= 13:
+        high_watermark_score = 80
+    elif high_watermark_retreat_pct >= 8:
+        high_watermark_score = 60
+    elif high_watermark_retreat_pct >= 5:
+        high_watermark_score = 40
+    elif high_watermark_retreat_pct >= 3:
+        high_watermark_score = 20
+    else:
+        high_watermark_score = 0
+
+    upside_targets = [target for target in sell_targets if target > current_price]
+    upside_probabilities = [
+        probability for target, probability in zip(sell_targets, sell_probabilities)
+        if target > current_price
+    ]
+
+    reachable_upside_count = sum(1 for probability in upside_probabilities if probability >= 0.15)
+
+    if len(upside_targets) == 0:
+        upside_compression_score = 100
+    elif reachable_upside_count == 0:
+        upside_compression_score = 100
+    elif reachable_upside_count == 1:
+        upside_compression_score = 60
+    elif reachable_upside_count == 2:
+        upside_compression_score = 40
+    else:
+        upside_compression_score = 20
+
+    score = (
+        0.40 * probability_collapse_score
+        + 0.25 * target_attrition_score
+        + 0.20 * high_watermark_score
+        + 0.15 * upside_compression_score
+    )
+
+    return max(0.0, min(100.0, score))
+
+
+def market_structure_raw_text(
+    current_price,
+    day_high,
+    sell_targets,
+    sell_probabilities,
+    previous_target_probabilities,
+):
+    collapse_items = []
+
+    for target, current_probability in zip(sell_targets, sell_probabilities):
+        previous_probability = previous_target_probabilities.get(float(target), None)
+        if previous_probability is None or previous_probability <= 0:
+            continue
+
+        collapse_pct = (1.0 - float(current_probability) / float(previous_probability)) * 100.0
+        collapse_items.append((target, previous_probability, current_probability, collapse_pct))
+
+    if collapse_items:
+        worst = sorted(collapse_items, key=lambda item: item[3], reverse=True)[0]
+        target, previous_probability, current_probability, collapse_pct = worst
+        collapse_text = f"{target:.0f}: {previous_probability:.1%} -> {current_probability:.1%}, collapse {collapse_pct:.0f}%"
+    else:
+        collapse_text = "No previous probability snapshot"
+
+    high_retreat = 0.0
+    if day_high > 0 and current_price < day_high:
+        high_retreat = (day_high - current_price) / day_high * 100.0
+
+    return f"{collapse_text}; high retreat {high_retreat:.1f}%"
+
+
 def build_sell_engine_table(
     current_price,
     fair_value,
@@ -975,6 +1103,7 @@ def build_sell_engine_table(
     launch_cadence_risk,
     nasa_dependence_risk,
     defense_contracts_risk,
+    previous_target_probabilities,
 ):
     valuation_score = score_valuation(current_price, fair_value)
     upside_score = score_expected_upside(current_price, sell_targets, sell_probabilities)
@@ -982,6 +1111,13 @@ def build_sell_engine_table(
     acceleration_score = score_price_acceleration(price_return_1d, price_return_3d, price_return_5d)
     volatility_score = score_volatility_ratio(volatility_ratio)
     liquidity_score = score_liquidity_climax(current_price, day_low, day_high, current_volume, avg_volume_20d)
+    structure_score = score_market_structure_deterioration(
+        current_price=current_price,
+        day_high=day_high,
+        sell_targets=sell_targets,
+        sell_probabilities=sell_probabilities,
+        previous_target_probabilities=previous_target_probabilities,
+    )
     position_score = score_position_size(position_value, total_portfolio_value)
     time_score = score_time_horizon(days_until_money_needed)
     concentration_score = score_portfolio_concentration(position_value, total_portfolio_value, second_largest_position)
@@ -1001,20 +1137,28 @@ def build_sell_engine_table(
     price_position = ((current_price - day_low) / (day_high - day_low)) if day_high > day_low else 0.0
     position_pct = position_value / total_portfolio_value * 100.0 if total_portfolio_value > 0 else 0.0
     concentration_ratio = position_value / second_largest_position if second_largest_position > 0 else 0.0
+    structure_raw = market_structure_raw_text(
+        current_price=current_price,
+        day_high=day_high,
+        sell_targets=sell_targets,
+        sell_probabilities=sell_probabilities,
+        previous_target_probabilities=previous_target_probabilities,
+    )
 
     rows = [
         {"Block": "Market", "Factor": "Valuation", "Raw Value": f"{valuation_raw:.1f}% premium to fair value", "Score": valuation_score, "Weight": 10.0},
-        {"Block": "Market", "Factor": "Expected Upside", "Raw Value": f"{expected_upside_raw:.1f}% heuristic EV", "Score": upside_score, "Weight": 9.0},
-        {"Block": "Market", "Factor": "Momentum", "Raw Value": f"{momentum_raw:.1f}% vs reference", "Score": momentum_score, "Weight": 8.0},
-        {"Block": "Market", "Factor": "Price Acceleration", "Raw Value": f"1d {price_return_1d:.1f}%, 3d {price_return_3d:.1f}%, 5d {price_return_5d:.1f}%", "Score": acceleration_score, "Weight": 4.0},
-        {"Block": "Market", "Factor": "Volatility", "Raw Value": f"{volatility_ratio:.2f}x", "Score": volatility_score, "Weight": 5.0},
-        {"Block": "Market", "Factor": "Liquidity Climax", "Raw Value": f"{volume_ratio:.2f}x volume, {price_position:.1%} of day range", "Score": liquidity_score, "Weight": 5.0},
+        {"Block": "Market", "Factor": "Expected Upside", "Raw Value": f"{expected_upside_raw:.1f}% heuristic EV", "Score": upside_score, "Weight": 7.0},
+        {"Block": "Market", "Factor": "Momentum", "Raw Value": f"{momentum_raw:.1f}% vs reference", "Score": momentum_score, "Weight": 7.0},
+        {"Block": "Market", "Factor": "Price Acceleration", "Raw Value": f"1d {price_return_1d:.1f}%, 3d {price_return_3d:.1f}%, 5d {price_return_5d:.1f}%", "Score": acceleration_score, "Weight": 3.0},
+        {"Block": "Market", "Factor": "Volatility", "Raw Value": f"{volatility_ratio:.2f}x", "Score": volatility_score, "Weight": 4.0},
+        {"Block": "Market", "Factor": "Liquidity Climax", "Raw Value": f"{volume_ratio:.2f}x volume, {price_position:.1%} of day range", "Score": liquidity_score, "Weight": 4.0},
+        {"Block": "Market", "Factor": "Market Structure Deterioration", "Raw Value": structure_raw, "Score": structure_score, "Weight": 12.0},
         {"Block": "Portfolio", "Factor": "Position Size", "Raw Value": f"{position_pct:.1f}% of portfolio", "Score": position_score, "Weight": 9.0},
         {"Block": "Portfolio", "Factor": "Time Horizon", "Raw Value": f"{days_until_money_needed:.0f} days until money needed", "Score": time_score, "Weight": 10.0},
         {"Block": "Portfolio", "Factor": "Portfolio Concentration", "Raw Value": f"{position_pct:.1f}% portfolio, {concentration_ratio:.2f}x second position", "Score": concentration_score, "Weight": 13.0},
-        {"Block": "Business / Judgment", "Factor": "Event Risk", "Raw Value": f"severity {event_severity:.1f}, p {event_probability:.2f}, {days_to_event:.0f} days", "Score": event_score, "Weight": 9.0},
-        {"Block": "Business / Judgment", "Factor": "Narrative Risk", "Raw Value": f"{narrative_risk_manual:.0f} manual score", "Score": narrative_score, "Weight": 8.0},
-        {"Block": "Business / Judgment", "Factor": "Execution Risk", "Raw Value": f"Starship {starship_status_risk:.0f}, cadence {launch_cadence_risk:.0f}, NASA {nasa_dependence_risk:.0f}, defense {defense_contracts_risk:.0f}", "Score": execution_score, "Weight": 10.0},
+        {"Block": "Business / Judgment", "Factor": "Event Risk", "Raw Value": f"severity {event_severity:.1f}, p {event_probability:.2f}, {days_to_event:.0f} days", "Score": event_score, "Weight": 7.0},
+        {"Block": "Business / Judgment", "Factor": "Narrative Risk", "Raw Value": f"{narrative_risk_manual:.0f} manual score", "Score": narrative_score, "Weight": 6.0},
+        {"Block": "Business / Judgment", "Factor": "Execution Risk", "Raw Value": f"Starship {starship_status_risk:.0f}, cadence {launch_cadence_risk:.0f}, NASA {nasa_dependence_risk:.0f}, defense {defense_contracts_risk:.0f}", "Score": execution_score, "Weight": 8.0},
     ]
 
     sell_engine_df = pd.DataFrame(rows)
@@ -1178,6 +1322,13 @@ with st.sidebar:
     price_return_3d_input = st.number_input("Fallback price return 3d %", value=28.0, step=0.5)
     price_return_5d_input = st.number_input("Fallback price return 5d %", value=58.0, step=0.5)
 
+    st.subheader("Market Structure Deterioration")
+
+    previous_probability_210 = st.number_input("Previous probability for 210 target %", min_value=0.0, max_value=100.0, value=98.0, step=1.0)
+    previous_probability_250 = st.number_input("Previous probability for 250 target %", min_value=0.0, max_value=100.0, value=53.0, step=1.0)
+    previous_probability_350 = st.number_input("Previous probability for 350 target %", min_value=0.0, max_value=100.0, value=12.0, step=1.0)
+    previous_probability_450 = st.number_input("Previous probability for 450 target %", min_value=0.0, max_value=100.0, value=1.0, step=0.5)
+
     days_until_money_needed_input = st.number_input(
         "Days until money needed",
         min_value=0.0,
@@ -1294,6 +1445,13 @@ sell_engine_targets = sell_ladder_df["Target sell price"].astype(float).tolist()
 sell_engine_probabilities = sell_ladder_df["Probability to target"].astype(float).tolist()
 position_value = float(snapshot["price"]) * float(position_size)
 
+previous_target_probabilities = {
+    210.0: float(previous_probability_210) / 100.0,
+    250.0: float(previous_probability_250) / 100.0,
+    350.0: float(previous_probability_350) / 100.0,
+    450.0: float(previous_probability_450) / 100.0,
+}
+
 market_inputs = derive_market_factor_inputs(
     ticker=ticker,
     fallback_price_5d=float(price_5d_input),
@@ -1335,9 +1493,10 @@ sell_engine_df, sell_engine_partial, sell_engine_weight, sell_engine_score, bloc
     launch_cadence_risk=float(launch_cadence_risk_input),
     nasa_dependence_risk=float(nasa_dependence_risk_input),
     defense_contracts_risk=float(defense_contracts_risk_input),
+    previous_target_probabilities=previous_target_probabilities,
 )
 
-st.subheader("SELL DECISION ENGINE V1.1 AUTO MARKET")
+st.subheader("SELL DECISION ENGINE V1.2 STRUCTURE")
 
 action = recommendation_from_score(sell_engine_score)
 
@@ -1381,7 +1540,7 @@ st.dataframe(
 )
 
 st.caption(
-    "Sell Engine V1.1 converts the 12-factor model into an investor-facing sell pressure, model-implied sale percentage, action status, and confidence level. Yahoo history is used for market factors when available; sidebar values remain fallback inputs."
+    "Sell Engine V1.2 converts the 12-factor model into an investor-facing sell pressure, model-implied sale percentage, action status, and confidence level. Yahoo history is used for market factors when available; sidebar values remain fallback inputs."
 )
 
 if not fair_value_df.empty:
@@ -1502,5 +1661,6 @@ st.download_button(
     file_name=f"{ticker.lower()}_live_model.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
 
 
