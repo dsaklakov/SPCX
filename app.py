@@ -880,58 +880,64 @@ def render_action_banner(action, score, confidence_score=None, sell_engine_df=No
         <div style="
             margin-top: 0.35rem;
             margin-bottom: 1.1rem;
-            padding: 1.15rem 1.35rem;
+            padding: 1.35rem 1.55rem;
             border-radius: 18px;
             border: 1.5px solid {accent};
             background: linear-gradient(135deg, {background}, #090909);
             box-shadow: 0 0 34px rgba(0,0,0,0.45);
+            overflow: hidden;
         ">
             <div style="
                 color: #A9A9A9;
                 font-size: 0.80rem;
                 letter-spacing: 0.16em;
                 text-transform: uppercase;
-                margin-bottom: 0.55rem;
+                margin-bottom: 1.05rem;
             ">
                 Sell Decision Engine
             </div>
+
             <div style="
                 display:grid;
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-                gap: 14px;
-                margin-bottom: 1.0rem;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                gap: 1.2rem 2.0rem;
+                margin-bottom: 1.25rem;
             ">
                 <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Sell Pressure</div>
-                    <div style="color:{accent};font-size:2.05rem;font-weight:850;white-space:nowrap;">{pressure}</div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Sell Pressure</div>
+                    <div style="color:{accent};font-size:2.25rem;font-weight:850;line-height:1.1;">{pressure}</div>
                 </div>
+
                 <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Model-Implied Sale</div>
-                    <div style="color:#F9FAFB;font-size:2.05rem;font-weight:850;white-space:nowrap;">{implied_sale}</div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Model-Implied Sale</div>
+                    <div style="color:#F9FAFB;font-size:2.25rem;font-weight:850;line-height:1.1;">{implied_sale}</div>
                 </div>
+
                 <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Action Status</div>
-                    <div style="color:#F9FAFB;font-size:1.35rem;font-weight:800;white-space:nowrap;">{status}</div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Action Status</div>
+                    <div style="color:#F9FAFB;font-size:1.45rem;font-weight:850;line-height:1.18;max-width:100%;word-break:normal;white-space:normal;">{status}</div>
                 </div>
+
                 <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Confidence</div>
-                    <div style="color:#F9FAFB;font-size:2.05rem;font-weight:850;white-space:nowrap;">{confidence_text}</div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Confidence</div>
+                    <div style="color:#F9FAFB;font-size:2.25rem;font-weight:850;line-height:1.1;">{confidence_text}</div>
                 </div>
             </div>
+
             <div style="
                 display:grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 14px;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                gap: 1.2rem 2.0rem;
                 border-top:1px solid rgba(255,255,255,0.12);
-                padding-top:0.85rem;
+                padding-top:1.0rem;
             ">
                 <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Primary Driver</div>
-                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;">{primary_driver}</div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Primary Driver</div>
+                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;line-height:1.25;">{primary_driver}</div>
                 </div>
                 <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Secondary Driver</div>
-                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;">{secondary_driver}</div>
+                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Secondary Driver</div>
+                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;line-height:1.25;">{secondary_driver}</div>
                 </div>
             </div>
         </div>
@@ -1661,6 +1667,7 @@ st.download_button(
     file_name=f"{ticker.lower()}_live_model.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
 
 
 
