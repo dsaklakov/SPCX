@@ -388,6 +388,122 @@ def get_snapshot(provider, ticker, manual_values):
     return manual_snapshot(ticker, **manual_values), None
 
 
+def derive_market_factor_inputs(
+    ticker,
+    fallback_price_5d,
+    fallback_volatility_ratio,
+    fallback_avg_volume_20d,
+    fallback_return_1d,
+    fallback_return_3d,
+    fallback_return_5d,
+):
+    result = {
+        "price_5d": float(fallback_price_5d),
+        "volatility_ratio": float(fallback_volatility_ratio),
+        "avg_volume_20d": float(fallback_avg_volume_20d),
+        "return_1d": float(fallback_return_1d),
+        "return_3d": float(fallback_return_3d),
+        "return_5d": float(fallback_return_5d),
+        "history_days": 0,
+        "notes": [],
+    }
+
+    if yf is None:
+        result["notes"].append("yfinance unavailable. Market factors use sidebar fallback values.")
+        return result
+
+    try:
+        history = yf.Ticker(ticker).history(period="6mo", interval="1d", prepost=False)
+    except Exception as exc:
+        result["notes"].append(f"Yahoo history unavailable. Market factors use sidebar fallback values. Error: {exc}")
+        return result
+
+    if history is None or history.empty:
+        result["notes"].append("Yahoo history returned no rows. Market factors use sidebar fallback values.")
+        return result
+
+    history = history.dropna(subset=["Close"])
+    if history.empty:
+        result["notes"].append("Yahoo history has no usable close prices. Market factors use sidebar fallback values.")
+        return result
+
+    closes = history["Close"].astype(float)
+    result["history_days"] = int(len(closes))
+
+    if len(closes) >= 5:
+        result["price_5d"] = float(closes.iloc[-5])
+    else:
+        result["price_5d"] = float(closes.iloc[0])
+        result["notes"].append("Momentum uses first available close because fewer than 5 trading days are available.")
+
+    if len(closes) >= 2:
+        result["return_1d"] = float((closes.iloc[-1] / closes.iloc[-2] - 1.0) * 100.0)
+    else:
+        result["notes"].append("1d return uses sidebar fallback because fewer than 2 closes are available.")
+
+    if len(closes) >= 4:
+        result["return_3d"] = float((closes.iloc[-1] / closes.iloc[-4] - 1.0) * 100.0)
+    else:
+        result["notes"].append("3d return uses sidebar fallback because fewer than 4 closes are available.")
+
+    if len(closes) >= 6:
+        result["return_5d"] = float((closes.iloc[-1] / closes.iloc[-6] - 1.0) * 100.0)
+    else:
+        result["notes"].append("5d return uses sidebar fallback because fewer than 6 closes are available.")
+
+    if "Volume" in history.columns and not history["Volume"].dropna().empty:
+        volumes = history["Volume"].astype(float)
+        result["avg_volume_20d"] = float(volumes.tail(20).mean())
+    else:
+        result["notes"].append("Average volume uses sidebar fallback because volume history is unavailable.")
+
+    log_returns = (closes / closes.shift(1)).apply(lambda x: math.log(x) if x > 0 else None).dropna()
+
+    if len(log_returns) >= 10:
+        vol_10d = float(log_returns.tail(10).std())
+        if len(log_returns) >= 90:
+            vol_base = float(log_returns.tail(90).std())
+        else:
+            vol_base = float(log_returns.std())
+            result["notes"].append("Volatility base uses available history because fewer than 90 return observations are available.")
+
+        if vol_base > 0:
+            result["volatility_ratio"] = float(vol_10d / vol_base)
+        else:
+            result["notes"].append("Volatility ratio uses sidebar fallback because base volatility is zero.")
+    else:
+        result["notes"].append("Volatility ratio uses sidebar fallback because fewer than 10 returns are available.")
+
+    return result
+
+
+def compute_confidence_score(market_history_days, market_notes):
+    score = 100.0
+    notes = []
+
+    if market_history_days < 90:
+        score -= 10
+        notes.append("Less than 90 trading days of market history")
+
+    if market_notes:
+        score -= 10
+        notes.append("At least one market factor uses fallback or shortened history")
+
+    score -= 10
+    notes.append("Probability ladder is a realized-range heuristic")
+
+    score -= 10
+    notes.append("Event risk is manual")
+
+    score -= 10
+    notes.append("Narrative risk is manual")
+
+    score -= 10
+    notes.append("Execution risk is manual")
+
+    return max(0.0, score), notes
+
+
 def build_tables(
     snapshot,
     targets,
@@ -584,7 +700,7 @@ def format_stat_value(metric, value):
     return f"{value:,.2f}"
 
 
-def make_excel(snapshot, model_df, ladder_df, stats_df, sell_engine_df):
+def make_excel(snapshot, model_df, ladder_df, stats_df, sell_engine_df, confidence_score=None, confidence_notes=None, market_inputs=None):
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -593,6 +709,28 @@ def make_excel(snapshot, model_df, ladder_df, stats_df, sell_engine_df):
         ladder_df.to_excel(writer, index=False, sheet_name="Market Sales")
         stats_df.to_excel(writer, index=False, sheet_name="Market Stats")
         sell_engine_df.to_excel(writer, index=False, sheet_name="Sell Engine")
+
+        pd.DataFrame(
+            [
+                ["Confidence Score", confidence_score],
+                ["Confidence Notes", " | ".join(confidence_notes or [])],
+            ],
+            columns=["Metric", "Value"],
+        ).to_excel(writer, index=False, sheet_name="Confidence")
+
+        pd.DataFrame(
+            [
+                ["price_5d", None if market_inputs is None else market_inputs.get("price_5d")],
+                ["volatility_ratio", None if market_inputs is None else market_inputs.get("volatility_ratio")],
+                ["avg_volume_20d", None if market_inputs is None else market_inputs.get("avg_volume_20d")],
+                ["return_1d", None if market_inputs is None else market_inputs.get("return_1d")],
+                ["return_3d", None if market_inputs is None else market_inputs.get("return_3d")],
+                ["return_5d", None if market_inputs is None else market_inputs.get("return_5d")],
+                ["history_days", None if market_inputs is None else market_inputs.get("history_days")],
+                ["notes", "" if market_inputs is None else " | ".join(market_inputs.get("notes", []))],
+            ],
+            columns=["Metric", "Value"],
+        ).to_excel(writer, index=False, sheet_name="Market Inputs")
 
     return output.getvalue()
 
@@ -786,7 +924,7 @@ st.markdown(
     <div class="spcx-hero-card">
         <div class="spcx-eyebrow">SPCX live IPO execution dashboard</div>
         <h1 class="spcx-title">SPCX Live Sale Model</h1>
-        <p class="spcx-subtitle">Near-live quote, $63 fair-value drawdown reference, sell-target probabilities, P/L ladder, float math, and Sell Decision Engine V1.2.</p>
+        <p class="spcx-subtitle">Near-live quote, $63 fair-value drawdown reference, sell-target probabilities, P/L ladder, float math, and Sell Decision Engine V1.1 Auto Market.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -879,21 +1017,21 @@ with st.sidebar:
     )
 
     price_5d_input = st.number_input(
-        "Reference price for momentum",
+        "Fallback reference price for momentum",
         min_value=0.01,
         value=135.00,
         step=0.01,
     )
 
     volatility_ratio_input = st.number_input(
-        "Volatility ratio",
+        "Fallback volatility ratio",
         min_value=0.01,
         value=1.00,
         step=0.05,
     )
 
     avg_volume_20d_input = st.number_input(
-        "Average volume 20d",
+        "Fallback average volume 20d",
         min_value=1.0,
         value=315_425_119.0,
         step=1000.0,
@@ -906,9 +1044,9 @@ with st.sidebar:
         step=1000.0,
     )
 
-    price_return_1d_input = st.number_input("Price return 1d %", value=12.0, step=0.5)
-    price_return_3d_input = st.number_input("Price return 3d %", value=28.0, step=0.5)
-    price_return_5d_input = st.number_input("Price return 5d %", value=58.0, step=0.5)
+    price_return_1d_input = st.number_input("Fallback price return 1d %", value=12.0, step=0.5)
+    price_return_3d_input = st.number_input("Fallback price return 3d %", value=28.0, step=0.5)
+    price_return_5d_input = st.number_input("Fallback price return 5d %", value=58.0, step=0.5)
 
     days_until_money_needed_input = st.number_input(
         "Days until money needed",
@@ -1026,22 +1164,37 @@ sell_engine_targets = sell_ladder_df["Target sell price"].astype(float).tolist()
 sell_engine_probabilities = sell_ladder_df["Probability to target"].astype(float).tolist()
 position_value = float(snapshot["price"]) * float(position_size)
 
+market_inputs = derive_market_factor_inputs(
+    ticker=ticker,
+    fallback_price_5d=float(market_inputs["price_5d"]),
+    fallback_volatility_ratio=float(market_inputs["volatility_ratio"]),
+    fallback_avg_volume_20d=float(market_inputs["avg_volume_20d"]),
+    fallback_return_1d=float(price_return_1d_input),
+    fallback_return_3d=float(price_return_3d_input),
+    fallback_return_5d=float(price_return_5d_input),
+)
+
+confidence_score, confidence_notes = compute_confidence_score(
+    market_history_days=market_inputs["history_days"],
+    market_notes=market_inputs["notes"],
+)
+
 sell_engine_df, sell_engine_partial, sell_engine_weight, sell_engine_score, block_scores = build_sell_engine_table(
     current_price=float(snapshot["price"]),
     fair_value=float(fair_value_input),
     sell_targets=sell_engine_targets,
     sell_probabilities=sell_engine_probabilities,
-    price_5d=float(price_5d_input),
-    volatility_ratio=float(volatility_ratio_input),
+    price_5d=float(market_inputs["price_5d"]),
+    volatility_ratio=float(market_inputs["volatility_ratio"]),
     current_volume=float(snapshot["volume"]),
-    avg_volume_20d=float(avg_volume_20d_input),
+    avg_volume_20d=float(market_inputs["avg_volume_20d"]),
     day_low=float(snapshot["low"]),
     day_high=float(snapshot["high"]),
     position_value=float(position_value),
     total_portfolio_value=float(total_portfolio_value_input),
-    price_return_1d=float(price_return_1d_input),
-    price_return_3d=float(price_return_3d_input),
-    price_return_5d=float(price_return_5d_input),
+    price_return_1d=float(market_inputs["return_1d"]),
+    price_return_3d=float(market_inputs["return_3d"]),
+    price_return_5d=float(market_inputs["return_5d"]),
     days_until_money_needed=float(days_until_money_needed_input),
     second_largest_position=float(second_largest_position_input),
     event_severity=float(event_severity_input),
@@ -1054,21 +1207,28 @@ sell_engine_df, sell_engine_partial, sell_engine_weight, sell_engine_score, bloc
     defense_contracts_risk=float(defense_contracts_risk_input),
 )
 
-st.subheader("SELL DECISION ENGINE V1.0")
+st.subheader("SELL DECISION ENGINE V1.1 AUTO MARKET")
 
 action = recommendation_from_score(sell_engine_score)
 
-engine_cols = st.columns(5)
+engine_cols = st.columns(6)
 engine_cols[0].metric("Implemented Weight", f"{sell_engine_weight:.0f}%")
 engine_cols[1].metric("Total Contribution", f"{sell_engine_partial:.1f} / {sell_engine_weight:.0f}")
 engine_cols[2].metric("Current Engine Score", f"{sell_engine_score:.1f}")
 engine_cols[3].metric("Market Score", f"{block_scores.get('Market', 0.0):.1f}")
 engine_cols[4].metric("Portfolio Score", f"{block_scores.get('Portfolio', 0.0):.1f}")
+engine_cols[5].metric("Confidence", f"{confidence_score:.0f}%")
 
 render_action_banner(action, sell_engine_score)
 
 business_cols = st.columns(1)
 business_cols[0].metric("Business / Judgment Score", f"{block_scores.get('Business / Judgment', 0.0):.1f}")
+
+if market_inputs["notes"]:
+    st.caption("Market data notes: " + " | ".join(market_inputs["notes"]))
+
+if confidence_notes:
+    st.caption("Confidence notes: " + " | ".join(confidence_notes))
 
 st.dataframe(
     sell_engine_df.style.format(
@@ -1083,7 +1243,7 @@ st.dataframe(
 )
 
 st.caption(
-    "Sell Engine V1.0 uses all 12 factors with 100% total model weight. Expected Upside is a heuristic based on target reach probabilities, not option-implied EV."
+    "Sell Engine V1.1 uses all 12 factors with 100% total model weight. Market factors use Yahoo history when available and sidebar values as fallback. Expected Upside is a heuristic based on target reach probabilities, not option-implied EV."
 )
 
 if not fair_value_df.empty:
@@ -1187,7 +1347,16 @@ stats_display["Value"] = [
 
 st.dataframe(stats_display, use_container_width=True, hide_index=True)
 
-excel_bytes = make_excel(snapshot, model_df, ladder_df, stats_df, sell_engine_df)
+excel_bytes = make_excel(
+    snapshot,
+    model_df,
+    ladder_df,
+    stats_df,
+    sell_engine_df,
+    confidence_score=confidence_score,
+    confidence_notes=confidence_notes,
+    market_inputs=market_inputs,
+)
 
 st.download_button(
     "Download updated Excel model",
