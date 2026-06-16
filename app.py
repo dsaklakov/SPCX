@@ -35,13 +35,7 @@ except Exception as exc:
     st.stop()
 
 
-FAVICON = APP_DIR / "assets" / "SPCX_Robotech_Favicon_192.png"
-
-st.set_page_config(
-    page_title="SPCX Live Model",
-    page_icon=str(FAVICON),
-    layout="wide",
-)
+st.set_page_config(page_title="SPCX Live Model", layout="wide")
 
 st.markdown(
     """
