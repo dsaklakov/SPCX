@@ -36,7 +36,7 @@ except Exception as exc:
 
 
 APP_DIR = Path(__file__).resolve().parent
-FAVICON = APP_DIR / "assets" / "SPCX_Robotech_Favicon_512.png"
+FAVICON = APP_DIR / "assets" / "SPCX_Robotech_Favicon_192.png"
 HERO_IMAGE = APP_DIR / "assets" / "spacex_ipo_robotech.png"
 
 st.set_page_config(
@@ -1665,3 +1665,4 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
+ 
