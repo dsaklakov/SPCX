@@ -23,6 +23,12 @@ try:
         score_volatility_ratio,
         score_liquidity_climax,
         score_position_size,
+        score_price_acceleration,
+        score_time_horizon,
+        score_portfolio_concentration,
+        score_event_risk,
+        score_narrative_risk,
+        score_execution_risk,
     )
 except Exception as exc:
     st.error(f"sell_engine.py could not be imported: {exc}")
@@ -605,6 +611,66 @@ def recommendation_from_score(score):
     return "SELL 55%"
 
 
+def action_palette(action):
+    if action == "HOLD":
+        return "#1f9d55", "#071a10"
+    if action == "PREPARE LIMIT ORDERS":
+        return "#d6a600", "#1d1703"
+    if action == "SELL 13%":
+        return "#d9822b", "#1f1004"
+    if action == "SELL 21%":
+        return "#f97016", "#241004"
+    if action == "SELL 34%":
+        return "#ef4444", "#230707"
+    if action == "SELL 55%":
+        return "#dc2626", "#260606"
+    return "#9ca3af", "#111111"
+
+
+def render_action_banner(action, score):
+    accent, background = action_palette(action)
+    st.markdown(
+        f"""
+        <div style="
+            margin-top: 0.35rem;
+            margin-bottom: 1.1rem;
+            padding: 1.05rem 1.25rem;
+            border-radius: 16px;
+            border: 1px solid {accent};
+            background: linear-gradient(135deg, {background}, #090909);
+            box-shadow: 0 0 28px rgba(0,0,0,0.38);
+        ">
+            <div style="
+                color: #A9A9A9;
+                font-size: 0.82rem;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                margin-bottom: 0.35rem;
+            ">
+                Recommended action
+            </div>
+            <div style="
+                color: {accent};
+                font-size: 3.1rem;
+                line-height: 1.0;
+                font-weight: 800;
+                white-space: nowrap;
+            ">
+                {action}
+            </div>
+            <div style="
+                color: #D1D5DB;
+                font-size: 0.95rem;
+                margin-top: 0.55rem;
+            ">
+                Current Engine Score: {score:.1f}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def compute_expected_upside_pct(current_price, targets, probabilities):
     if current_price <= 0:
         return 0.0
@@ -628,13 +694,37 @@ def build_sell_engine_table(
     day_high,
     position_value,
     total_portfolio_value,
+    price_return_1d,
+    price_return_3d,
+    price_return_5d,
+    days_until_money_needed,
+    second_largest_position,
+    event_severity,
+    event_probability,
+    days_to_event,
+    narrative_risk_manual,
+    starship_status_risk,
+    launch_cadence_risk,
+    nasa_dependence_risk,
+    defense_contracts_risk,
 ):
     valuation_score = score_valuation(current_price, fair_value)
     upside_score = score_expected_upside(current_price, sell_targets, sell_probabilities)
     momentum_score = score_momentum(current_price, price_5d)
+    acceleration_score = score_price_acceleration(price_return_1d, price_return_3d, price_return_5d)
     volatility_score = score_volatility_ratio(volatility_ratio)
     liquidity_score = score_liquidity_climax(current_price, day_low, day_high, current_volume, avg_volume_20d)
     position_score = score_position_size(position_value, total_portfolio_value)
+    time_score = score_time_horizon(days_until_money_needed)
+    concentration_score = score_portfolio_concentration(position_value, total_portfolio_value, second_largest_position)
+    event_score = score_event_risk(event_severity, event_probability, days_to_event)
+    narrative_score = score_narrative_risk(manual_score=narrative_risk_manual)
+    execution_score = score_execution_risk(
+        starship_status_risk,
+        launch_cadence_risk,
+        nasa_dependence_risk,
+        defense_contracts_risk,
+    )
 
     valuation_raw = ((current_price - fair_value) / fair_value * 100.0) if fair_value > 0 else 0.0
     expected_upside_raw = compute_expected_upside_pct(current_price, sell_targets, sell_probabilities)
@@ -642,59 +732,26 @@ def build_sell_engine_table(
     volume_ratio = current_volume / avg_volume_20d if avg_volume_20d > 0 else 0.0
     price_position = ((current_price - day_low) / (day_high - day_low)) if day_high > day_low else 0.0
     position_pct = position_value / total_portfolio_value * 100.0 if total_portfolio_value > 0 else 0.0
+    concentration_ratio = position_value / second_largest_position if second_largest_position > 0 else 0.0
 
     rows = [
-        {
-            "Block": "Market",
-            "Factor": "Valuation",
-            "Raw Value": f"{valuation_raw:.1f}% premium to fair value",
-            "Score": valuation_score,
-            "Weight": 10.0,
-            "Contribution": valuation_score * 10.0 / 100.0,
-        },
-        {
-            "Block": "Market",
-            "Factor": "Expected Upside",
-            "Raw Value": f"{expected_upside_raw:.1f}% heuristic EV",
-            "Score": upside_score,
-            "Weight": 9.0,
-            "Contribution": upside_score * 9.0 / 100.0,
-        },
-        {
-            "Block": "Market",
-            "Factor": "Momentum",
-            "Raw Value": f"{momentum_raw:.1f}% vs reference",
-            "Score": momentum_score,
-            "Weight": 8.0,
-            "Contribution": momentum_score * 8.0 / 100.0,
-        },
-        {
-            "Block": "Market",
-            "Factor": "Volatility",
-            "Raw Value": f"{volatility_ratio:.2f}x",
-            "Score": volatility_score,
-            "Weight": 5.0,
-            "Contribution": volatility_score * 5.0 / 100.0,
-        },
-        {
-            "Block": "Market",
-            "Factor": "Liquidity Climax",
-            "Raw Value": f"{volume_ratio:.2f}x volume, {price_position:.1%} of day range",
-            "Score": liquidity_score,
-            "Weight": 5.0,
-            "Contribution": liquidity_score * 5.0 / 100.0,
-        },
-        {
-            "Block": "Portfolio",
-            "Factor": "Position Size",
-            "Raw Value": f"{position_pct:.1f}% of portfolio",
-            "Score": position_score,
-            "Weight": 9.0,
-            "Contribution": position_score * 9.0 / 100.0,
-        },
+        {"Block": "Market", "Factor": "Valuation", "Raw Value": f"{valuation_raw:.1f}% premium to fair value", "Score": valuation_score, "Weight": 10.0},
+        {"Block": "Market", "Factor": "Expected Upside", "Raw Value": f"{expected_upside_raw:.1f}% heuristic EV", "Score": upside_score, "Weight": 9.0},
+        {"Block": "Market", "Factor": "Momentum", "Raw Value": f"{momentum_raw:.1f}% vs reference", "Score": momentum_score, "Weight": 8.0},
+        {"Block": "Market", "Factor": "Price Acceleration", "Raw Value": f"1d {price_return_1d:.1f}%, 3d {price_return_3d:.1f}%, 5d {price_return_5d:.1f}%", "Score": acceleration_score, "Weight": 4.0},
+        {"Block": "Market", "Factor": "Volatility", "Raw Value": f"{volatility_ratio:.2f}x", "Score": volatility_score, "Weight": 5.0},
+        {"Block": "Market", "Factor": "Liquidity Climax", "Raw Value": f"{volume_ratio:.2f}x volume, {price_position:.1%} of day range", "Score": liquidity_score, "Weight": 5.0},
+        {"Block": "Portfolio", "Factor": "Position Size", "Raw Value": f"{position_pct:.1f}% of portfolio", "Score": position_score, "Weight": 9.0},
+        {"Block": "Portfolio", "Factor": "Time Horizon", "Raw Value": f"{days_until_money_needed:.0f} days until money needed", "Score": time_score, "Weight": 10.0},
+        {"Block": "Portfolio", "Factor": "Portfolio Concentration", "Raw Value": f"{position_pct:.1f}% portfolio, {concentration_ratio:.2f}x second position", "Score": concentration_score, "Weight": 13.0},
+        {"Block": "Business / Judgment", "Factor": "Event Risk", "Raw Value": f"severity {event_severity:.1f}, p {event_probability:.2f}, {days_to_event:.0f} days", "Score": event_score, "Weight": 9.0},
+        {"Block": "Business / Judgment", "Factor": "Narrative Risk", "Raw Value": f"{narrative_risk_manual:.0f} manual score", "Score": narrative_score, "Weight": 8.0},
+        {"Block": "Business / Judgment", "Factor": "Execution Risk", "Raw Value": f"Starship {starship_status_risk:.0f}, cadence {launch_cadence_risk:.0f}, NASA {nasa_dependence_risk:.0f}, defense {defense_contracts_risk:.0f}", "Score": execution_score, "Weight": 10.0},
     ]
 
     sell_engine_df = pd.DataFrame(rows)
+    sell_engine_df["Contribution"] = sell_engine_df["Score"] * sell_engine_df["Weight"] / 100.0
+
     implemented_weight = float(sell_engine_df["Weight"].sum())
     implemented_contribution = float(sell_engine_df["Contribution"].sum())
     current_engine_score = implemented_contribution / implemented_weight * 100.0 if implemented_weight else 0.0
@@ -706,7 +763,6 @@ def build_sell_engine_table(
         block_scores[block] = block_contribution / block_weight * 100.0 if block_weight else 0.0
 
     return sell_engine_df, implemented_contribution, implemented_weight, current_engine_score, block_scores
-
 
 if HERO_IMAGE.exists():
     st.image(str(HERO_IMAGE), use_container_width=True)
@@ -850,6 +906,37 @@ with st.sidebar:
         step=1000.0,
     )
 
+    price_return_1d_input = st.number_input("Price return 1d %", value=12.0, step=0.5)
+    price_return_3d_input = st.number_input("Price return 3d %", value=28.0, step=0.5)
+    price_return_5d_input = st.number_input("Price return 5d %", value=58.0, step=0.5)
+
+    days_until_money_needed_input = st.number_input(
+        "Days until money needed",
+        min_value=0.0,
+        value=90.0,
+        step=1.0,
+    )
+
+    second_largest_position_input = st.number_input(
+        "Second largest position value",
+        min_value=0.0,
+        value=10_000.0,
+        step=1000.0,
+    )
+
+    st.subheader("Business / Judgment inputs")
+
+    event_severity_input = st.slider("Event severity", 0.0, 10.0, 5.0, 0.5)
+    event_probability_input = st.slider("Event probability", 0.0, 1.0, 0.35, 0.05)
+    days_to_event_input = st.number_input("Days to event", min_value=0.0, value=14.0, step=1.0)
+
+    narrative_risk_input = st.slider("Narrative risk manual score", 0.0, 100.0, 50.0, 1.0)
+
+    starship_status_risk_input = st.slider("Starship status risk", 0.0, 100.0, 50.0, 1.0)
+    launch_cadence_risk_input = st.slider("Launch cadence risk", 0.0, 100.0, 40.0, 1.0)
+    nasa_dependence_risk_input = st.slider("NASA dependence risk", 0.0, 100.0, 35.0, 1.0)
+    defense_contracts_risk_input = st.slider("Defense contracts risk", 0.0, 100.0, 45.0, 1.0)
+
 refresh_count = None
 
 if auto_refresh:
@@ -952,17 +1039,36 @@ sell_engine_df, sell_engine_partial, sell_engine_weight, sell_engine_score, bloc
     day_high=float(snapshot["high"]),
     position_value=float(position_value),
     total_portfolio_value=float(total_portfolio_value_input),
+    price_return_1d=float(price_return_1d_input),
+    price_return_3d=float(price_return_3d_input),
+    price_return_5d=float(price_return_5d_input),
+    days_until_money_needed=float(days_until_money_needed_input),
+    second_largest_position=float(second_largest_position_input),
+    event_severity=float(event_severity_input),
+    event_probability=float(event_probability_input),
+    days_to_event=float(days_to_event_input),
+    narrative_risk_manual=float(narrative_risk_input),
+    starship_status_risk=float(starship_status_risk_input),
+    launch_cadence_risk=float(launch_cadence_risk_input),
+    nasa_dependence_risk=float(nasa_dependence_risk_input),
+    defense_contracts_risk=float(defense_contracts_risk_input),
 )
 
-st.subheader("SELL DECISION ENGINE V1.2")
+st.subheader("SELL DECISION ENGINE V1.0")
 
-engine_cols = st.columns(6)
+action = recommendation_from_score(sell_engine_score)
+
+engine_cols = st.columns(5)
 engine_cols[0].metric("Implemented Weight", f"{sell_engine_weight:.0f}%")
-engine_cols[1].metric("Partial Contribution", f"{sell_engine_partial:.1f} / {sell_engine_weight:.0f}")
+engine_cols[1].metric("Total Contribution", f"{sell_engine_partial:.1f} / {sell_engine_weight:.0f}")
 engine_cols[2].metric("Current Engine Score", f"{sell_engine_score:.1f}")
 engine_cols[3].metric("Market Score", f"{block_scores.get('Market', 0.0):.1f}")
 engine_cols[4].metric("Portfolio Score", f"{block_scores.get('Portfolio', 0.0):.1f}")
-engine_cols[5].metric("Action", recommendation_from_score(sell_engine_score))
+
+render_action_banner(action, sell_engine_score)
+
+business_cols = st.columns(1)
+business_cols[0].metric("Business / Judgment Score", f"{block_scores.get('Business / Judgment', 0.0):.1f}")
 
 st.dataframe(
     sell_engine_df.style.format(
@@ -977,7 +1083,7 @@ st.dataframe(
 )
 
 st.caption(
-    "Sell Engine V1.2 uses 6 implemented factors with 46% total model weight. Expected Upside is a heuristic based on target reach probabilities, not option-implied EV. Current Engine Score is normalized only across implemented factors."
+    "Sell Engine V1.0 uses all 12 factors with 100% total model weight. Expected Upside is a heuristic based on target reach probabilities, not option-implied EV."
 )
 
 if not fair_value_df.empty:
