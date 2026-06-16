@@ -780,15 +780,15 @@ def model_implied_sale_pct(action):
 def action_status(action, confidence_score):
     if confidence_score < 50:
         if action.startswith("SELL"):
-            return "WATCH / MODEL SIGNAL ONLY"
+            return "WATCH"
         return "WATCH"
     if confidence_score < 65:
         if action.startswith("SELL"):
-            return "WATCH / PREPARE LIMITS"
+            return "PREPARE"
         return "WATCH"
     if confidence_score < 80:
         if action.startswith("SELL"):
-            return "CONDITIONAL PARTIAL TRIM"
+            return "PARTIAL TRIM"
         return "ACTIONABLE WATCH"
     if action.startswith("SELL"):
         return "ACTIONABLE"
@@ -869,75 +869,46 @@ def render_action_banner(action, score, confidence_score=None, sell_engine_df=No
     implied_sale = model_implied_sale_pct(action)
     status = action_status(action, confidence_score if confidence_score is not None else 0)
     accent, background = action_palette(action)
-
     primary_driver = top_driver_text(sell_engine_df, 0)
     secondary_driver = top_driver_text(sell_engine_df, 1)
-
     confidence_text = "N/A" if confidence_score is None else f"{confidence_score:.0f}%"
 
-    st.markdown(
-        f"""
-        <div style="
-            margin-top: 0.35rem;
-            margin-bottom: 1.1rem;
-            padding: 1.15rem 1.35rem;
-            border-radius: 18px;
-            border: 1.5px solid {accent};
-            background: linear-gradient(135deg, {background}, #090909);
-            box-shadow: 0 0 34px rgba(0,0,0,0.45);
-        ">
-            <div style="
-                color: #A9A9A9;
-                font-size: 0.80rem;
-                letter-spacing: 0.16em;
-                text-transform: uppercase;
-                margin-bottom: 0.55rem;
-            ">
-                Sell Decision Engine
+    html = f"""
+    <div style="margin-top:0.35rem;margin-bottom:1.1rem;padding:1.35rem 1.55rem;border-radius:18px;border:1.5px solid {accent};background:linear-gradient(135deg,{background},#090909);box-shadow:0 0 34px rgba(0,0,0,0.45);overflow:hidden;">
+        <div style="color:#A9A9A9;font-size:0.80rem;letter-spacing:0.16em;text-transform:uppercase;margin-bottom:1.05rem;">Sell Decision Engine</div>
+
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.2rem 2.0rem;margin-bottom:1.25rem;">
+            <div>
+                <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Sell Pressure</div>
+                <div style="color:{accent};font-size:2.25rem;font-weight:850;line-height:1.1;">{pressure}</div>
             </div>
-            <div style="
-                display:grid;
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-                gap: 14px;
-                margin-bottom: 1.0rem;
-            ">
-                <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Sell Pressure</div>
-                    <div style="color:{accent};font-size:2.05rem;font-weight:850;white-space:nowrap;">{pressure}</div>
-                </div>
-                <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Model-Implied Sale</div>
-                    <div style="color:#F9FAFB;font-size:2.05rem;font-weight:850;white-space:nowrap;">{implied_sale}</div>
-                </div>
-                <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Action Status</div>
-                    <div style="color:#F9FAFB;font-size:1.35rem;font-weight:800;white-space:nowrap;">{status}</div>
-                </div>
-                <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Confidence</div>
-                    <div style="color:#F9FAFB;font-size:2.05rem;font-weight:850;white-space:nowrap;">{confidence_text}</div>
-                </div>
+            <div>
+                <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Model-Implied Sale</div>
+                <div style="color:#F9FAFB;font-size:2.25rem;font-weight:850;line-height:1.1;">{implied_sale}</div>
             </div>
-            <div style="
-                display:grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 14px;
-                border-top:1px solid rgba(255,255,255,0.12);
-                padding-top:0.85rem;
-            ">
-                <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Primary Driver</div>
-                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;">{primary_driver}</div>
-                </div>
-                <div>
-                    <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;">Secondary Driver</div>
-                    <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;">{secondary_driver}</div>
-                </div>
+            <div>
+                <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Action Status</div>
+                <div style="color:#F9FAFB;font-size:1.45rem;font-weight:850;line-height:1.18;white-space:normal;">{status}</div>
+            </div>
+            <div>
+                <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Confidence</div>
+                <div style="color:#F9FAFB;font-size:2.25rem;font-weight:850;line-height:1.1;">{confidence_text}</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.2rem 2.0rem;border-top:1px solid rgba(255,255,255,0.12);padding-top:1.0rem;">
+            <div>
+                <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Primary Driver</div>
+                <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;line-height:1.25;">{primary_driver}</div>
+            </div>
+            <div>
+                <div style="color:#9CA3AF;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Secondary Driver</div>
+                <div style="color:#D1D5DB;font-size:1.02rem;font-weight:700;line-height:1.25;">{secondary_driver}</div>
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 def compute_expected_upside_pct(current_price, targets, probabilities):
     if current_price <= 0:
@@ -1158,7 +1129,7 @@ def build_sell_engine_table(
         {"Block": "Portfolio", "Factor": "Portfolio Concentration", "Raw Value": f"{position_pct:.1f}% portfolio, {concentration_ratio:.2f}x second position", "Score": concentration_score, "Weight": 13.0},
         {"Block": "Business / Judgment", "Factor": "Event Risk", "Raw Value": f"severity {event_severity:.1f}, p {event_probability:.2f}, {days_to_event:.0f} days", "Score": event_score, "Weight": 7.0},
         {"Block": "Business / Judgment", "Factor": "Narrative Risk", "Raw Value": f"{narrative_risk_manual:.0f} manual score", "Score": narrative_score, "Weight": 6.0},
-        {"Block": "Business / Judgment", "Factor": "Execution Risk", "Raw Value": f"Starship {starship_status_risk:.0f}, cadence {launch_cadence_risk:.0f}, NASA {nasa_dependence_risk:.0f}, defense {defense_contracts_risk:.0f}", "Score": execution_score, "Weight": 8.0},
+        {"Block": "Business / Judgment", "Factor": "Business Development Factors", "Raw Value": f"Manual score {execution_score:.1f}", "Score": execution_score, "Weight": 8.0},
     ]
 
     sell_engine_df = pd.DataFrame(rows)
@@ -1351,10 +1322,7 @@ with st.sidebar:
 
     narrative_risk_input = st.slider("Narrative risk manual score", 0.0, 100.0, 50.0, 1.0)
 
-    starship_status_risk_input = st.slider("Starship status risk", 0.0, 100.0, 50.0, 1.0)
-    launch_cadence_risk_input = st.slider("Launch cadence risk", 0.0, 100.0, 40.0, 1.0)
-    nasa_dependence_risk_input = st.slider("NASA dependence risk", 0.0, 100.0, 35.0, 1.0)
-    defense_contracts_risk_input = st.slider("Defense contracts risk", 0.0, 100.0, 45.0, 1.0)
+    business_development_risk_input = st.slider("Business Development Factors", 0.0, 100.0, 45.0, 1.0)
 
 refresh_count = None
 
@@ -1489,10 +1457,10 @@ sell_engine_df, sell_engine_partial, sell_engine_weight, sell_engine_score, bloc
     event_probability=float(event_probability_input),
     days_to_event=float(days_to_event_input),
     narrative_risk_manual=float(narrative_risk_input),
-    starship_status_risk=float(starship_status_risk_input),
-    launch_cadence_risk=float(launch_cadence_risk_input),
-    nasa_dependence_risk=float(nasa_dependence_risk_input),
-    defense_contracts_risk=float(defense_contracts_risk_input),
+    starship_status_risk=float(business_development_risk_input),
+    launch_cadence_risk=float(business_development_risk_input),
+    nasa_dependence_risk=float(business_development_risk_input),
+    defense_contracts_risk=float(business_development_risk_input),
     previous_target_probabilities=previous_target_probabilities,
 )
 
@@ -1661,7 +1629,5 @@ st.download_button(
     file_name=f"{ticker.lower()}_live_model.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
-
-
 
 
